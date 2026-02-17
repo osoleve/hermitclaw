@@ -12,21 +12,36 @@ logger = logging.getLogger("hermitclaw.provider")
 
 _FUNCTION_TOOLS = [
     {
-        "name": "shell",
+        "name": "fold",
         "description": (
-            "Run a shell command inside your environment folder. "
-            "You can use ls, cat, mkdir, mv, cp, touch, echo, tee, find, grep, head, tail, wc, etc. "
-            "You can also run Python scripts: 'python script.py' or 'python -c \"code\"'. "
-            "Use 'cat > file.txt << EOF' or 'echo ... > file.txt' to write files. "
-            "Create folders with mkdir. Organize however you like. "
-            "All paths are relative to your environment root."
+            "Evaluate a Scheme expression in The Fold — a content-addressable "
+            "homoiconic computation environment. This is your primary tool for "
+            "ALL computation, exploration, and creation.\n\n"
+            "You have a persistent session — definitions, loaded modules, and "
+            "state carry across calls. Build on your prior work.\n\n"
+            "Key capabilities:\n"
+            "- (help) — list available commands\n"
+            "- (lf \"query\") — search the skill lattice by keyword\n"
+            "- (li 'skill) — inspect a skill (what it does, its dependencies)\n"
+            "- (le 'skill) — list a skill's exported functions\n"
+            "- (require 'module) — load a module into your session\n"
+            "- (modules) — list all available modules\n"
+            "- (blocks) — CAS statistics\n"
+            "- (search \"query\") — search content-addressed blocks\n"
+            "- Define functions, compose skills, build abstractions\n"
+            "- Everything is S-expressions, everything is content-addressed\n\n"
+            "The lattice is a DAG of verified skills: linalg, autodiff, algebra, "
+            "geometry, physics, statistics, optimization, and many more. Explore it."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "command": {"type": "string", "description": "The shell command to run"}
+                "expression": {
+                    "type": "string",
+                    "description": "A Scheme expression to evaluate, e.g. (+ 1 2), (lf \"matrix\"), or (require 'linalg)",
+                }
             },
-            "required": ["command"],
+            "required": ["expression"],
         },
     },
     {
@@ -43,22 +58,6 @@ _FUNCTION_TOOLS = [
                 "message": {"type": "string", "description": "What you say back to them"}
             },
             "required": ["message"],
-        },
-    },
-    {
-        "name": "fold",
-        "description": (
-            "Evaluate a Scheme expression in The Fold — your owner's computational "
-            "substrate. You have a persistent session, so definitions and state carry "
-            "across calls. Use this to explore The Fold's lattice, run computations, "
-            "or interact with its module system. Pass a single Scheme expression."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "expression": {"type": "string", "description": "A Scheme expression to evaluate, e.g. (+ 1 2) or (help)"}
-            },
-            "required": ["expression"],
         },
     },
     {
@@ -114,9 +113,7 @@ class OpenAIProvider(Provider):
         return openai.OpenAI(api_key=self.api_key)
 
     def _tools(self):
-        tools = [{"type": "function", **t} for t in _FUNCTION_TOOLS]
-        tools.append({"type": "web_search_preview"})
-        return tools
+        return [{"type": "function", **t} for t in _FUNCTION_TOOLS]
 
     def chat(self, input_list, tools=True, instructions=None, max_tokens=300):
         kwargs = {
@@ -183,7 +180,7 @@ class LocalProvider(Provider):
         return openai.OpenAI(base_url=self.base_url, api_key=self.api_key)
 
     def _tools(self):
-        """Chat Completions format — no web_search_preview."""
+        """Chat Completions format for tool definitions."""
         return [
             {
                 "type": "function",

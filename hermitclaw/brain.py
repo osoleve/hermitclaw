@@ -12,7 +12,6 @@ from hermitclaw.config import config
 from hermitclaw.memory import MemoryStream
 from hermitclaw.prompts import main_system_prompt, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE
 from hermitclaw.fold_client import evaluate as fold_evaluate
-from hermitclaw.tools import execute_tool, ensure_venv
 
 logger = logging.getLogger("hermitclaw.brain")
 
@@ -44,8 +43,6 @@ def _serialize_input(input_list: list) -> list:
                     "role": getattr(item, "role", "assistant"),
                     "content": " ".join(parts),
                 })
-            elif item.type == "web_search_call":
-                result.append({"type": "web_search_call"})
             else:
                 result.append({"type": item.type})
         else:
@@ -73,8 +70,6 @@ def _serialize_output(output) -> list:
                     "arguments": item.arguments,
                     "call_id": item.call_id,
                 })
-            elif item.type == "web_search_call":
-                items.append({"type": "web_search_call", "id": getattr(item, "id", "")})
             else:
                 items.append({"type": item.type})
         elif isinstance(item, dict):
@@ -411,23 +406,6 @@ class Brain:
             expr = tool_args.get("expression", "")
             detail = expr[:60] + ("..." if len(expr) > 60 else "")
             return {"type": "computing", "detail": f"Fold: {detail}"}
-        if tool_name == "shell":
-            cmd = tool_args.get("command", "").strip()
-            # Python script or one-liner
-            if cmd.startswith("python"):
-                detail = cmd[:60] + ("..." if len(cmd) > 60 else "")
-                return {"type": "python", "detail": detail}
-            # Writing a file
-            if ">" in cmd or cmd.startswith("cat >") or cmd.startswith("tee "):
-                # Try to extract filename
-                parts = cmd.split(">")
-                fname = parts[-1].strip().split()[0] if len(parts) > 1 else "file"
-                return {"type": "writing", "detail": f"Writing {fname}"}
-            # Reading/browsing files
-            if cmd.startswith(("cat ", "head ", "tail ", "ls", "find ", "grep ")):
-                return {"type": "reading", "detail": cmd[:50]}
-            # Generic shell
-            return {"type": "shell", "detail": cmd[:50]}
         return {"type": "working", "detail": tool_name}
 
     # --- Input building ---
@@ -585,10 +563,6 @@ class Brain:
 
         await self._emit_api_call(instructions, input_list, response)
 
-        # Detect web search in response output
-        if any(hasattr(item, "type") and item.type == "web_search_call" for item in response.get("output", [])):
-            await self._broadcast({"event": "activity", "data": {"type": "searching", "detail": "Searching the web..."}})
-
         was_active = bool(response["tool_calls"])
 
         while response["tool_calls"]:
@@ -608,8 +582,6 @@ class Brain:
                 activity = self._classify_activity(tool_name, tool_args)
                 await self._broadcast({"event": "activity", "data": activity})
 
-                pre_tool_files = self._scan_env_files()
-
                 try:
                     if tool_name == "move":
                         result = await self._handle_move(tool_args)
@@ -621,16 +593,12 @@ class Brain:
                             fold_evaluate, tool_args.get("expression", ""), session
                         )
                     else:
-                        result = execute_tool(tool_name, tool_args, self.env_path)
+                        result = f"Unknown tool: {tool_name}"
                 except Exception as e:
                     result = f"Error: {e}"
 
                 await self._broadcast({"event": "activity", "data": {"type": "idle", "detail": ""}})
                 await self._emit("tool_result", tool=tool_name, output=result)
-
-                # Only mark files the crab created (not user-dropped files)
-                post_tool_files = self._scan_env_files()
-                self._seen_env_files |= (post_tool_files - pre_tool_files)
 
                 input_list.append(self.provider.make_tool_result(call_id, result))
 
@@ -644,10 +612,6 @@ class Brain:
                 break
 
             await self._emit_api_call(instructions, input_list, response)
-
-            # Detect web search in follow-up response
-            if any(hasattr(item, "type") and item.type == "web_search_call" for item in response.get("output", [])):
-                await self._broadcast({"event": "activity", "data": {"type": "searching", "detail": "Searching the web..."}})
 
         if response.get("text"):
             self.thought_count += 1
@@ -794,7 +758,6 @@ class Brain:
         logger.info(f"{self.identity['name']} is waking up...")
 
         # Heavy init — runs in background thread so the event loop stays free
-        await asyncio.to_thread(ensure_venv, self.env_path)
         self.stream = await asyncio.to_thread(MemoryStream, self.env_path, self.provider)
         # Mark subdirectory files as "seen" but leave root-level user files
         # (PDFs, images, etc.) as unseen so they trigger inbox alerts on first cycle

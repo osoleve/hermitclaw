@@ -37,89 +37,21 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 
 // --- Activity drawing helpers ---
 
-function drawTerminal(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  // Dark terminal window
+function drawComputing(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  // Fold computing indicator — animated S-expression parentheses
   ctx.fillStyle = "#1e293b";
   ctx.fillRect(x - 12, y - 8, 24, 16);
-  ctx.strokeStyle = "#475569";
+  ctx.strokeStyle = "#8b5cf6";
   ctx.lineWidth = 1;
   ctx.strokeRect(x - 12, y - 8, 24, 16);
-  // Green prompt
-  ctx.fillStyle = "#22c55e";
-  ctx.font = "bold 8px monospace";
+  // Animated lambda/parens
+  ctx.fillStyle = "#a78bfa";
+  ctx.font = "bold 9px monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const blink = Math.floor(Date.now() / 500) % 2 === 0;
-  ctx.fillText(blink ? ">_" : "> ", x, y);
-}
-
-function drawPython(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  // Blue-yellow python badge
-  ctx.fillStyle = "#1e3a5f";
-  ctx.fillRect(x - 12, y - 8, 24, 16);
-  ctx.strokeStyle = "#3b82f6";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x - 12, y - 8, 24, 16);
-  ctx.fillStyle = "#fbbf24";
-  ctx.font = "bold 8px monospace";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("py", x, y);
-}
-
-function drawSearching(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  const t = Date.now() / 400;
-  const wobble = Math.sin(t) * 2;
-  // Magnifying glass — circle + handle
-  ctx.strokeStyle = "#3b82f6";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(x + wobble, y - 2, 6, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x + 4 + wobble, y + 2);
-  ctx.lineTo(x + 8 + wobble, y + 6);
-  ctx.stroke();
-}
-
-function drawWriting(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  // Little paper
-  ctx.fillStyle = "#fefce8";
-  ctx.fillRect(x - 6, y - 7, 12, 14);
-  ctx.strokeStyle = "#d4d4d8";
-  ctx.lineWidth = 0.5;
-  ctx.strokeRect(x - 6, y - 7, 12, 14);
-  // Lines on paper
-  ctx.fillStyle = "#94a3b8";
-  ctx.fillRect(x - 4, y - 4, 8, 1);
-  ctx.fillRect(x - 4, y - 1, 8, 1);
-  ctx.fillRect(x - 4, y + 2, 5, 1);
-  // Animated pencil
-  const bob = Math.sin(Date.now() / 200) * 1.5;
-  ctx.fillStyle = "#f59e0b";
-  ctx.fillRect(x + 4, y - 2 + bob, 2, 8);
-  ctx.fillStyle = "#1e293b";
-  ctx.fillRect(x + 4, y + 5 + bob, 2, 2); // tip
-}
-
-function drawReading(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  // Open book
-  ctx.fillStyle = "#dbeafe";
-  ctx.fillRect(x - 8, y - 5, 7, 10);
-  ctx.fillRect(x + 1, y - 5, 7, 10);
-  ctx.strokeStyle = "#3b82f6";
-  ctx.lineWidth = 0.5;
-  ctx.strokeRect(x - 8, y - 5, 7, 10);
-  ctx.strokeRect(x + 1, y - 5, 7, 10);
-  // Spine
-  ctx.fillStyle = "#3b82f6";
-  ctx.fillRect(x - 1, y - 6, 2, 12);
-  // Lines
-  ctx.fillStyle = "#93c5fd";
-  ctx.fillRect(x - 6, y - 2, 4, 1);
-  ctx.fillRect(x - 6, y + 1, 4, 1);
-  ctx.fillRect(x + 3, y - 2, 4, 1);
-  ctx.fillRect(x + 3, y + 1, 4, 1);
+  const blink = Math.floor(Date.now() / 600) % 3;
+  const symbols = ["(λ)", "(· )", "( ·)"];
+  ctx.fillText(symbols[blink], x, y);
 }
 
 const GameWorld = forwardRef<GameWorldHandle, Props>(
@@ -321,11 +253,7 @@ const GameWorld = forwardRef<GameWorldHandle, Props>(
             const actX = charX + DISPLAY_SIZE + 8;
             const actY = charY + DISPLAY_SIZE / 2;
 
-            if (act.type === "shell") drawTerminal(ctx, actX, actY);
-            else if (act.type === "python") drawPython(ctx, actX, actY);
-            else if (act.type === "searching") drawSearching(ctx, actX, actY);
-            else if (act.type === "writing") drawWriting(ctx, actX, actY);
-            else if (act.type === "reading") drawReading(ctx, actX, actY);
+            if (act.type === "computing") drawComputing(ctx, actX, actY);
             else if (act.type === "conversing") {
               // Small speech lines
               ctx.strokeStyle = "#ea580c";

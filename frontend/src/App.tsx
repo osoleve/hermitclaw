@@ -82,8 +82,6 @@ function renderFunctionCall(name: string, rawArgs: unknown, phase: Phase): Msg |
   let cmd: string;
   if (name === "fold") {
     cmd = parsed?.expression ? `> ${parsed.expression}` : "> (empty)";
-  } else if (name === "shell") {
-    cmd = parsed?.command ? `$ ${parsed.command}` : "$ (empty)";
   } else if (name === "move") {
     cmd = `[move → ${parsed?.location || "?"}]`;
   } else {

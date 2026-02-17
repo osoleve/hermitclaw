@@ -17,12 +17,4 @@ recency_decay_rate: 0.995      # exponential decay rate for recency scoring
 # --- Per-crab overrides ---
 # Any key here overrides the global default for that crab.
 # Crab ID is the lowercased name (e.g. "coral" for coral_box/).
-crabs:
-  helper:
-    provider: "local"
-    model: "moonshotai/kimi-k2.5"
-    base_url: "https://openrouter.ai/api/v1"
-    api_key: "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"
-    embedding_model: "openai/text-embedding-3-small"
-    idle_pace_seconds: 60
-    active_pace_seconds: 30
+crabs: {}
