@@ -94,12 +94,14 @@ if __name__ == "__main__":
     # Initialize the app with all brains
     app = create_app(brains)
 
+    port = int(os.environ.get("HERMITCLAW_PORT", config.get("port", 8080)))
+
     names = [b.identity["name"] for b in brains.values()]
     print(f"\n  Starting {len(brains)} crab(s): {', '.join(names)}")
-    print(f"  Open http://localhost:8000 to watch them think\n")
+    print(f"  Open http://localhost:{port} to watch them think\n")
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8000,
+        port=port,
         log_level="info",
     )
