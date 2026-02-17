@@ -11,8 +11,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import uvicorn
 from hermitclaw.brain import Brain
-from hermitclaw.config import config
+from hermitclaw.config import config, get_crab_config
 from hermitclaw.identity import load_identity_from, create_identity
+from hermitclaw.provider import create_provider
 from hermitclaw.server import create_app
 
 logging.basicConfig(
@@ -56,7 +57,9 @@ def _discover_crabs() -> dict[str, Brain]:
         if not identity:
             continue
         crab_id = _crab_id_from_box(box_path)
-        brain = Brain(identity, box_path)
+        crab_cfg = get_crab_config(crab_id)
+        provider = create_provider(crab_cfg)
+        brain = Brain(identity, box_path, provider)
         brains[crab_id] = brain
 
     return brains
@@ -74,14 +77,18 @@ if __name__ == "__main__":
             identity = create_identity()
             crab_id = identity["name"].lower()
             box_path = os.path.join(PROJECT_ROOT, f"{crab_id}_box")
-            brain = Brain(identity, box_path)
+            crab_cfg = get_crab_config(crab_id)
+            provider = create_provider(crab_cfg)
+            brain = Brain(identity, box_path, provider)
             brains[crab_id] = brain
     else:
         print("\n  No crabs found. Let's create one!")
         identity = create_identity()
         crab_id = identity["name"].lower()
         box_path = os.path.join(PROJECT_ROOT, f"{crab_id}_box")
-        brain = Brain(identity, box_path)
+        crab_cfg = get_crab_config(crab_id)
+        provider = create_provider(crab_cfg)
+        brain = Brain(identity, box_path, provider)
         brains[crab_id] = brain
 
     # Initialize the app with all brains

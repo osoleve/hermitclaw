@@ -9,7 +9,6 @@ from datetime import datetime
 
 from hermitclaw.config import config
 from hermitclaw.prompts import IMPORTANCE_PROMPT
-from hermitclaw.providers import chat_short, embed
 
 logger = logging.getLogger("hermitclaw.memory")
 
@@ -29,8 +28,9 @@ def _cosine_sim(a: list[float], b: list[float]) -> float:
 class MemoryStream:
     """Append-only memory stream with recency × importance × relevance retrieval."""
 
-    def __init__(self, environment_path: str):
+    def __init__(self, environment_path: str, provider=None):
         self.path = os.path.join(environment_path, STREAM_FILENAME)
+        self.provider = provider
         self.memories: list[dict] = []
         self.importance_sum: float = 0.0  # running sum since last reflection
         self._next_id: int = 0
@@ -66,7 +66,7 @@ class MemoryStream:
 
         # Compute embedding
         try:
-            embedding = embed(content)
+            embedding = self.provider.embed(content) if self.provider else []
         except Exception as e:
             logger.error(f"Embedding failed: {e}")
             embedding = []
@@ -106,7 +106,7 @@ class MemoryStream:
 
         # Embed the query
         try:
-            query_embedding = embed(query)
+            query_embedding = self.provider.embed(query) if self.provider else []
         except Exception as e:
             logger.error(f"Query embedding failed: {e}")
             return self.memories[-top_k:]  # fallback to recent
@@ -158,7 +158,9 @@ class MemoryStream:
     def _score_importance(self, content: str) -> int:
         """Ask the LLM to rate importance 1-10."""
         try:
-            result = chat_short(
+            if not self.provider:
+                return 5
+            result = self.provider.chat_short(
                 [{"role": "user", "content": content}],
                 instructions=IMPORTANCE_PROMPT,
             )

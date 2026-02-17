@@ -1,5 +1,8 @@
 # HermitClaw Configuration
+
+# --- Global defaults (apply to all crabs unless overridden) ---
 model: "gpt-4.1"
+provider: "openai"              # "openai" or "local"
 api_key: null                   # set here or via OPENAI_API_KEY env var
 
 thinking_pace_seconds: 5       # how often it thinks (steady pulse)
@@ -11,5 +14,12 @@ memory_retrieval_count: 3      # how many memories to retrieve per query
 embedding_model: "text-embedding-3-small"
 recency_decay_rate: 0.995      # exponential decay rate for recency scoring
 
-# environment_path is auto-detected from *_box/ directories
-# Uncomment to override: environment_path: "./mybox"
+# --- Per-crab overrides ---
+# Any key here overrides the global default for that crab.
+# Crab ID is the lowercased name (e.g. "coral" for coral_box/).
+crabs:
+  helper:
+    provider: "local"
+    model: "Qwen/Qwen3-32B-FP8"
+    base_url: "http://192.168.1.110:8000/v1"
+    thinking_pace_seconds: 8

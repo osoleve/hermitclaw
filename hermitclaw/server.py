@@ -13,8 +13,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from hermitclaw.brain import Brain
-from hermitclaw.config import config
+from hermitclaw.config import config, get_crab_config
 from hermitclaw.identity import _derive_traits
+from hermitclaw.provider import create_provider
 
 logger = logging.getLogger("hermitclaw.server")
 
@@ -134,7 +135,9 @@ async def create_crab(request: Request):
         json.dump(identity, f, indent=2)
 
     # Start the brain
-    brain = Brain(identity, box_path)
+    crab_cfg = get_crab_config(crab_id)
+    provider = create_provider(crab_cfg)
+    brain = Brain(identity, box_path, provider)
     brains[crab_id] = brain
     asyncio.create_task(brain.run())
     logger.info(f"Created and started new crab: {name} ({crab_id})")

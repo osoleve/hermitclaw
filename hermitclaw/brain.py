@@ -11,7 +11,6 @@ from datetime import datetime, date
 from hermitclaw.config import config
 from hermitclaw.memory import MemoryStream
 from hermitclaw.prompts import main_system_prompt, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE
-from hermitclaw.providers import chat, chat_short
 from hermitclaw.tools import execute_tool, ensure_venv
 
 logger = logging.getLogger("hermitclaw.brain")
@@ -136,9 +135,10 @@ class Brain:
     # Planning frequency — plan every N think cycles
     PLAN_INTERVAL = 10
 
-    def __init__(self, identity: dict, env_path: str):
+    def __init__(self, identity: dict, env_path: str, provider=None):
         self.identity = identity
         self.env_path = env_path
+        self.provider = provider
         self.events: list[dict] = []
         self.api_calls: list[dict] = []
         self.thought_count: int = 0
@@ -565,7 +565,7 @@ class Brain:
         instructions, input_list = self._build_input()
 
         try:
-            response = chat(input_list, tools=True, instructions=instructions)
+            response = self.provider.chat(input_list, tools=True, instructions=instructions)
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             await self._emit("error", text=str(e))
@@ -613,14 +613,10 @@ class Brain:
                 post_tool_files = self._scan_env_files()
                 self._seen_env_files |= (post_tool_files - pre_tool_files)
 
-                input_list.append({
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": result,
-                })
+                input_list.append(self.provider.make_tool_result(call_id, result))
 
             try:
-                response = chat(input_list, tools=True, instructions=instructions)
+                response = self.provider.chat(input_list, tools=True, instructions=instructions)
             except Exception as e:
                 logger.error(f"LLM follow-up call failed: {e}")
                 await self._emit("error", text=str(e))
@@ -666,7 +662,7 @@ class Brain:
         reflect_input = [{"role": "user", "content": f"Your recent memories:\n\n{memories_text}"}]
         try:
             reflect_response = await asyncio.to_thread(
-                chat, reflect_input, False, REFLECTION_PROMPT
+                self.provider.chat, reflect_input, False, REFLECTION_PROMPT
             )
             await self._emit_api_call(REFLECTION_PROMPT, reflect_input, reflect_response, is_reflection=True)
             reflection_text = reflect_response["text"] or ""
@@ -719,7 +715,7 @@ class Brain:
 
         try:
             plan_response = await asyncio.to_thread(
-                chat, plan_input, False, PLANNING_PROMPT
+                self.provider.chat, plan_input, False, PLANNING_PROMPT
             )
             await self._emit_api_call(PLANNING_PROMPT, plan_input, plan_response, is_planning=True)
             plan_text = plan_response["text"] or ""
@@ -776,7 +772,7 @@ class Brain:
 
         # Heavy init — runs in background thread so the event loop stays free
         await asyncio.to_thread(ensure_venv, self.env_path)
-        self.stream = await asyncio.to_thread(MemoryStream, self.env_path)
+        self.stream = await asyncio.to_thread(MemoryStream, self.env_path, self.provider)
         # Mark subdirectory files as "seen" but leave root-level user files
         # (PDFs, images, etc.) as unseen so they trigger inbox alerts on first cycle
         all_files = self._scan_env_files()

@@ -17,6 +17,7 @@ def load_config() -> dict:
         or config.get("api_key")
     )
     config["model"] = os.environ.get("HERMITCLAW_MODEL") or config.get("model", "gpt-4o")
+    config.setdefault("provider", "openai")
 
     # Defaults for numeric settings
     config.setdefault("thinking_pace_seconds", 45)
@@ -26,6 +27,7 @@ def load_config() -> dict:
     config.setdefault("memory_retrieval_count", 3)
     config.setdefault("embedding_model", "text-embedding-3-small")
     config.setdefault("recency_decay_rate", 0.995)
+    config.setdefault("crabs", {})
 
     # Resolve environment_path relative to project root
     project_root = os.path.dirname(os.path.dirname(__file__))
@@ -33,6 +35,26 @@ def load_config() -> dict:
         config["environment_path"] = os.path.join(project_root, config["environment_path"])
 
     return config
+
+
+def get_crab_config(crab_id: str, base_config: dict = None) -> dict:
+    """Merge global config with per-crab overrides. Returns a flat dict."""
+    if base_config is None:
+        base_config = config
+
+    # Start with global settings
+    merged = {k: v for k, v in base_config.items() if k != "crabs"}
+
+    # Layer on per-crab overrides
+    per_crab = base_config.get("crabs") or {}
+    if crab_id in per_crab and isinstance(per_crab[crab_id], dict):
+        merged.update(per_crab[crab_id])
+
+    # Ensure embedding_api_key falls back to api_key for local providers
+    if "embedding_api_key" not in merged:
+        merged["embedding_api_key"] = merged.get("api_key")
+
+    return merged
 
 
 # Global config — loaded once, can be updated at runtime
