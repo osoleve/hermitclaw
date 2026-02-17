@@ -339,7 +339,7 @@ def create_provider(crab_config: dict) -> Provider:
         return LocalProvider(
             base_url=crab_config["base_url"],
             model=crab_config["model"],
-            api_key=crab_config.get("api_key", "not-needed"),
+            api_key=crab_config.get("api_key") or "not-needed",
             embedding_api_key=crab_config.get("embedding_api_key") or crab_config.get("api_key"),
             embedding_model=crab_config.get("embedding_model", "text-embedding-3-small"),
         )
