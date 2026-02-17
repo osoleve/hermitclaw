@@ -11,6 +11,7 @@ from datetime import datetime, date
 from hermitclaw.config import config
 from hermitclaw.memory import MemoryStream
 from hermitclaw.prompts import main_system_prompt, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE
+from hermitclaw.fold_client import evaluate as fold_evaluate
 from hermitclaw.tools import execute_tool, ensure_venv
 
 logger = logging.getLogger("hermitclaw.brain")
@@ -135,10 +136,11 @@ class Brain:
     # Planning frequency — plan every N think cycles
     PLAN_INTERVAL = 10
 
-    def __init__(self, identity: dict, env_path: str, provider=None):
+    def __init__(self, identity: dict, env_path: str, provider=None, crab_config: dict = None):
         self.identity = identity
         self.env_path = env_path
         self.provider = provider
+        self.crab_config = crab_config or {}
         self.events: list[dict] = []
         self.api_calls: list[dict] = []
         self.thought_count: int = 0
@@ -321,6 +323,9 @@ class Brain:
     def receive_user_message(self, text: str):
         """Queue a message from the user to be injected in the next think cycle."""
         self._user_message = text
+        # Wake up immediately if sleeping
+        if hasattr(self, "_wake_event"):
+            self._wake_event.set()
 
     def receive_conversation_reply(self, text: str):
         """Deliver a reply while the crab is waiting (inside a respond tool call)."""
@@ -402,6 +407,10 @@ class Brain:
             return {"type": "moving", "detail": f"Going to {loc}"}
         if tool_name == "respond":
             return {"type": "conversing", "detail": "Talking to someone..."}
+        if tool_name == "fold":
+            expr = tool_args.get("expression", "")
+            detail = expr[:60] + ("..." if len(expr) > 60 else "")
+            return {"type": "computing", "detail": f"Fold: {detail}"}
         if tool_name == "shell":
             cmd = tool_args.get("command", "").strip()
             # Python script or one-liner
@@ -558,7 +567,8 @@ class Brain:
 
     # --- Think cycle ---
 
-    async def _think_once(self):
+    async def _think_once(self) -> bool:
+        """Run one think cycle. Returns True if the crab did something (tool calls)."""
         self.state = "thinking"
         await self._broadcast({"event": "status", "data": {"state": "thinking", "thought_count": self.thought_count}})
 
@@ -578,6 +588,8 @@ class Brain:
         # Detect web search in response output
         if any(hasattr(item, "type") and item.type == "web_search_call" for item in response.get("output", [])):
             await self._broadcast({"event": "activity", "data": {"type": "searching", "detail": "Searching the web..."}})
+
+        was_active = bool(response["tool_calls"])
 
         while response["tool_calls"]:
             if response.get("text"):
@@ -603,6 +615,11 @@ class Brain:
                         result = await self._handle_move(tool_args)
                     elif tool_name == "respond":
                         result = await self._handle_respond(tool_args)
+                    elif tool_name == "fold":
+                        session = f"hermitclaw-{self.identity['name'].lower()}"
+                        result = await asyncio.to_thread(
+                            fold_evaluate, tool_args.get("expression", ""), session
+                        )
                     else:
                         result = execute_tool(tool_name, tool_args, self.env_path)
                 except Exception as e:
@@ -643,6 +660,8 @@ class Brain:
                 )
             except Exception as e:
                 logger.error(f"Memory add failed: {e}")
+
+        return was_active
 
     # --- Reflection ---
 
@@ -788,6 +807,12 @@ class Brain:
 
         logger.info(f"{self.identity['name']} is ready.")
 
+        # Adaptive pacing: active (tool calls) = 30s, idle = 60s
+        # User messages wake immediately via _wake_event
+        self._wake_event = asyncio.Event()
+        idle_pace = self.crab_config.get("idle_pace_seconds", config.get("idle_pace_seconds", 60))
+        active_pace = self.crab_config.get("active_pace_seconds", config.get("active_pace_seconds", 30))
+
         while self.running:
             # Check for new files anywhere in environment/
             new_files = self._check_new_files()
@@ -795,7 +820,7 @@ class Brain:
                 self._inbox_pending = new_files
                 await self._broadcast({"event": "alert"})
 
-            await self._think_once()
+            was_active = await self._think_once()
 
             if self.stream.should_reflect():
                 await self._reflect()
@@ -808,7 +833,21 @@ class Brain:
             self.state = "idle"
             await self._broadcast({"event": "status", "data": {"state": "idle", "thought_count": self.thought_count}})
             await self._idle_wander()
-            await asyncio.sleep(config["thinking_pace_seconds"])
+
+            pace = active_pace if was_active else idle_pace
+            self._wake_event.clear()
+            try:
+                await asyncio.wait_for(self._wake_event.wait(), timeout=pace)
+            except asyncio.TimeoutError:
+                pass
+
+    def _log_jsonl(self, entry: dict):
+        """Write an arbitrary entry to the JSONL log file."""
+        try:
+            with open(LOG_PATH, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
 
     def stop(self):
         self.running = False

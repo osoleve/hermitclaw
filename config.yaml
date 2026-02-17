@@ -20,6 +20,9 @@ recency_decay_rate: 0.995      # exponential decay rate for recency scoring
 crabs:
   helper:
     provider: "local"
-    model: "Qwen/Qwen3-32B-FP8"
-    base_url: "http://localhost:8000/v1"
-    thinking_pace_seconds: 8
+    model: "moonshotai/kimi-k2.5"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key: "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"
+    embedding_model: "openai/text-embedding-3-small"
+    idle_pace_seconds: 60
+    active_pace_seconds: 30

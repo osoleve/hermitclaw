@@ -18,7 +18,7 @@ interface CrabInfo {
 }
 
 type Phase = "normal" | "dream" | "planning";
-type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean };
+type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean; isOwner?: boolean };
 
 /**
  * Render an INPUT item — we only care about:
@@ -30,12 +30,24 @@ function renderInputItem(item: Record<string, unknown>, phase: Phase): Msg | nul
   if (item.role === "user") {
     const content = item.content;
     // Content can be a string or an array (when it includes an image)
+    if (typeof content === "string") {
+      // Detect owner voice messages and extract just the spoken text
+      const voiceMatch = content.match(/^You hear a voice from outside your room say: "(.+?)"\n/s);
+      if (voiceMatch) {
+        return { side: "left", text: voiceMatch[1], phase, isOwner: true };
+      }
+    }
     if (Array.isArray(content)) {
       let text = "";
       let image: string | undefined;
       for (const part of content) {
         if (part.type === "input_text") text = part.text as string;
         if (part.type === "input_image") image = part.image_url as string;
+      }
+      // Check text part for owner voice pattern too
+      const voiceMatch = text.match(/^You hear a voice from outside your room say: "(.+?)"\n/s);
+      if (voiceMatch) {
+        return { side: "left", text: voiceMatch[1], phase, isOwner: true, image };
       }
       return { side: "left", text: text || "[image]", phase, image };
     }
@@ -68,7 +80,9 @@ function renderFunctionCall(name: string, rawArgs: unknown, phase: Phase): Msg |
     return text ? { side: "right", text, phase, isRespond: true } : null;
   }
   let cmd: string;
-  if (name === "shell") {
+  if (name === "fold") {
+    cmd = parsed?.expression ? `> ${parsed.expression}` : "> (empty)";
+  } else if (name === "shell") {
     cmd = parsed?.command ? `$ ${parsed.command}` : "$ (empty)";
   } else if (name === "move") {
     cmd = `[move → ${parsed?.location || "?"}]`;
@@ -300,29 +314,33 @@ export default function App() {
     }
   }, [crabState, crabParam]);
 
-  // Only auto-scroll if user is already near the bottom; otherwise show indicator
+  // Auto-scroll: track whether user is "pinned" to bottom
+  const pinnedRef = useRef(true);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-    if (nearBottom) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const onScroll = () => {
+      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+      if (pinnedRef.current) setHasNew(false);
+    };
+    el.addEventListener("scroll", onScroll);
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // When calls change, scroll to bottom if pinned
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (pinnedRef.current) {
+      // Use requestAnimationFrame to ensure DOM has laid out new content
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
     } else {
       setHasNew(true);
     }
   }, [calls.length]);
 
-  // Clear "new messages" when user scrolls to bottom
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-      if (nearBottom) setHasNew(false);
-    };
-    el.addEventListener("scroll", onScroll);
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
 
   const sendMessage = () => {
     const text = chatInput.trim();
@@ -477,13 +495,15 @@ export default function App() {
 
               const bubbleStyle = msg.isRespond
                 ? respondBubble
+                : msg.isOwner
+                ? ownerBubble
                 : p === "dream"
                 ? isLeft ? dreamBubbleLeft : dreamBubbleRight
                 : p === "planning"
                 ? isLeft ? planBubbleLeft : planBubbleRight
                 : isLeft ? bubbleLeft : bubbleRight;
 
-              const textColor = isLeft && p === "normal" && !msg.isRespond ? "#111" : "#fff";
+              const textColor = isLeft && p === "normal" && !msg.isRespond && !msg.isOwner ? "#111" : "#fff";
 
               return (
                 <div
@@ -760,6 +780,13 @@ const respondBubble: React.CSSProperties = {
   background: "#ea580c",
   color: "#fff",
   borderRadius: "16px 16px 4px 16px",
+};
+
+const ownerBubble: React.CSSProperties = {
+  ...bubbleBase,
+  background: "#2563eb",
+  color: "#fff",
+  borderRadius: "16px 16px 16px 4px",
 };
 
 const snapshotImg: React.CSSProperties = {

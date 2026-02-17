@@ -46,6 +46,22 @@ _FUNCTION_TOOLS = [
         },
     },
     {
+        "name": "fold",
+        "description": (
+            "Evaluate a Scheme expression in The Fold — your owner's computational "
+            "substrate. You have a persistent session, so definitions and state carry "
+            "across calls. Use this to explore The Fold's lattice, run computations, "
+            "or interact with its module system. Pass a single Scheme expression."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {"type": "string", "description": "A Scheme expression to evaluate, e.g. (+ 1 2) or (help)"}
+            },
+            "required": ["expression"],
+        },
+    },
+    {
         "name": "move",
         "description": (
             "Move to a location in your room. Use this to go where feels natural "
@@ -154,13 +170,14 @@ class LocalProvider(Provider):
     """Uses OpenAI-compatible Chat Completions API — for vLLM and similar."""
 
     def __init__(self, base_url: str, model: str, api_key: str = "not-needed",
-                 embedding_api_key: str = None, embedding_model: str = "text-embedding-3-small"):
+                 embedding_api_key: str = None, embedding_model: str = "text-embedding-3-small",
+                 embedding_base_url: str = None):
         self.base_url = base_url
         self.model = model
         self.api_key = api_key
-        # Embeddings still go to OpenAI (cheap, reliable)
         self.embedding_api_key = embedding_api_key
         self.embedding_model = embedding_model
+        self.embedding_base_url = embedding_base_url
 
     def _client(self) -> openai.OpenAI:
         return openai.OpenAI(base_url=self.base_url, api_key=self.api_key)
@@ -259,9 +276,10 @@ class LocalProvider(Provider):
             "model": self.model,
             "messages": messages,
             "max_tokens": max_tokens,
-            # Disable Qwen3 thinking mode — saves tokens, crab doesn't need CoT
-            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
         }
+        # Disable Qwen3 thinking mode for local vLLM — not needed for hosted APIs
+        if "localhost" in self.base_url or "127.0.0.1" in self.base_url or "192.168." in self.base_url:
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         if tools:
             kwargs["tools"] = self._tools()
 
@@ -316,7 +334,10 @@ class LocalProvider(Provider):
     def embed(self, text):
         if not self.embedding_api_key:
             return []
-        client = openai.OpenAI(api_key=self.embedding_api_key)
+        kwargs = {"api_key": self.embedding_api_key}
+        if self.embedding_base_url:
+            kwargs["base_url"] = self.embedding_base_url
+        client = openai.OpenAI(**kwargs)
         response = client.embeddings.create(
             model=self.embedding_model,
             input=text,
@@ -342,6 +363,7 @@ def create_provider(crab_config: dict) -> Provider:
             api_key=crab_config.get("api_key") or "not-needed",
             embedding_api_key=crab_config.get("embedding_api_key") or crab_config.get("api_key"),
             embedding_model=crab_config.get("embedding_model", "text-embedding-3-small"),
+            embedding_base_url=crab_config.get("embedding_base_url") or crab_config.get("base_url"),
         )
     else:
         return OpenAIProvider(

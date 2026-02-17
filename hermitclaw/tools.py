@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -74,12 +75,16 @@ def _is_safe_command(command: str) -> str | None:
         if clean == ".." or clean.startswith("../") or "/.." in clean:
             return "Blocked: '..' path traversal is not allowed in commands."
 
-    # Block shell escape tricks
-    if "`" in stripped:
+    # Block shell escape tricks — but allow them inside heredoc bodies,
+    # which are literal content (especially with quoted delimiters like <<'EOF').
+    check_str = re.sub(r"<<-?\s*'(\w+)'\s*\n.*?\n\1", "", stripped, flags=re.DOTALL)
+    check_str = re.sub(r'<<-?\s*"(\w+)"\s*\n.*?\n\1', "", check_str, flags=re.DOTALL)
+    check_str = re.sub(r'<<-?\s*(\w+)\s*\n.*?\n\1', "", check_str, flags=re.DOTALL)
+    if "`" in check_str:
         return "Blocked: backtick command substitution is not allowed."
-    if "$(" in stripped:
+    if "$(" in check_str:
         return "Blocked: command substitution $() is not allowed."
-    if "${" in stripped:
+    if "${" in check_str:
         return "Blocked: variable expansion ${} is not allowed."
     if "~" in stripped:
         return "Blocked: '~' (home expansion) is not allowed."
@@ -88,7 +93,6 @@ def _is_safe_command(command: str) -> str | None:
     # Check each whitespace-separated token; strip leading shell operators.
     # Only flag tokens where / is followed by a word char (actual paths like /usr/bin),
     # not markup like /> or /' or /" which appear in XML/HTML/SVG content.
-    import re
     for token in stripped.split():
         clean = token.lstrip("><=|;&(")
         if re.match(r"/[A-Za-z0-9_]", clean) and not clean.startswith("/dev/null"):
