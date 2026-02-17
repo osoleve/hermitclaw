@@ -6,6 +6,9 @@ import json
 import logging
 import os
 import time
+import traceback
+
+from datetime import datetime
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +31,65 @@ def create_app(all_brains: dict[str, Brain]) -> FastAPI:
     global brains
     brains = all_brains
     return app
+
+
+async def _supervise_brain(crab_id: str, brain: Brain):
+    """Supervise a brain coroutine — restart on crash with exponential backoff."""
+    backoff = 5
+    max_backoff = 120
+    restart_count = 0
+
+    while True:
+        start = time.monotonic()
+        try:
+            await brain.run()
+            break  # clean exit (brain.stop() was called)
+        except Exception as e:
+            restart_count += 1
+            elapsed = time.monotonic() - start
+            tb = traceback.format_exc()
+            logger.error(
+                f"Brain '{crab_id}' died (restart #{restart_count}, "
+                f"ran {elapsed:.0f}s): {e}"
+            )
+
+            # Log to JSONL so it shows up in the permanent record
+            brain._log_jsonl({
+                "timestamp": datetime.now().isoformat(),
+                "type": "coroutine_death",
+                "crab_id": crab_id,
+                "crab_name": brain.identity.get("name", crab_id),
+                "error": str(e),
+                "traceback": tb,
+                "thought_count": brain.thought_count,
+                "restart_count": restart_count,
+                "backoff_seconds": backoff,
+            })
+
+            # Best-effort broadcast to connected frontends
+            try:
+                await brain._broadcast({
+                    "event": "error",
+                    "data": {
+                        "message": f"Brain crashed: {e}",
+                        "restarting_in": backoff,
+                    },
+                })
+            except Exception:
+                pass
+
+            # If the brain ran for 5+ minutes, it was probably a transient issue
+            if elapsed > 300:
+                backoff = 5
+                restart_count = 0
+
+            # Don't restart if we were intentionally stopped
+            if not brain.running:
+                break
+
+            logger.info(f"Restarting '{crab_id}' in {backoff}s...")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
 
 
 def _get_brain(request: Request) -> Brain:
@@ -137,9 +199,9 @@ async def create_crab(request: Request):
     # Start the brain
     crab_cfg = get_crab_config(crab_id)
     provider = create_provider(crab_cfg)
-    brain = Brain(identity, box_path, provider)
+    brain = Brain(identity, box_path, provider, crab_config=crab_cfg)
     brains[crab_id] = brain
-    asyncio.create_task(brain.run())
+    asyncio.create_task(_supervise_brain(crab_id, brain))
     logger.info(f"Created and started new crab: {name} ({crab_id})")
 
     return {"ok": True, "id": crab_id, "name": name}
@@ -258,6 +320,6 @@ async def startup():
         # Small delay so the server finishes binding the port first
         await asyncio.sleep(0.5)
         for crab_id, brain in brains.items():
-            asyncio.create_task(brain.run())
+            asyncio.create_task(_supervise_brain(crab_id, brain))
             logger.info(f"{brain.identity['name']} ({crab_id}) starting...")
     asyncio.create_task(_start_brains())
