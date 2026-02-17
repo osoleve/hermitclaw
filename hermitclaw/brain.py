@@ -565,7 +565,9 @@ class Brain:
         instructions, input_list = self._build_input()
 
         try:
-            response = self.provider.chat(input_list, tools=True, instructions=instructions)
+            response = await asyncio.to_thread(
+                self.provider.chat, input_list, True, instructions
+            )
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             await self._emit("error", text=str(e))
@@ -616,7 +618,9 @@ class Brain:
                 input_list.append(self.provider.make_tool_result(call_id, result))
 
             try:
-                response = self.provider.chat(input_list, tools=True, instructions=instructions)
+                response = await asyncio.to_thread(
+                    self.provider.chat, input_list, True, instructions
+                )
             except Exception as e:
                 logger.error(f"LLM follow-up call failed: {e}")
                 await self._emit("error", text=str(e))
