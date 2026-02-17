@@ -1,4 +1,4 @@
-"""Entry point — multi-crab discovery + onboarding + starts the server."""
+"""Entry point — creature discovery + onboarding + starts the server."""
 
 import glob
 import json
@@ -10,11 +10,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import uvicorn
-from hermitclaw.brain import Brain
-from hermitclaw.config import config, get_crab_config
-from hermitclaw.identity import load_identity_from, create_identity
-from hermitclaw.provider import create_provider
-from hermitclaw.server import create_app
+from myxo.brain import Brain
+from myxo.config import config, get_crab_config
+from myxo.identity import load_identity_from, create_identity
+from myxo.provider import create_provider
+from myxo.server import create_app
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,7 +94,7 @@ if __name__ == "__main__":
     # Initialize the app with all brains
     app = create_app(brains)
 
-    port = int(os.environ.get("HERMITCLAW_PORT", config.get("port", 8080)))
+    port = int(os.environ.get("MYXO_PORT", config.get("port", 8080)))
 
     names = [b.identity["name"] for b in brains.values()]
     print(f"\n  Starting {len(brains)} crab(s): {', '.join(names)}")

@@ -430,8 +430,8 @@ export default function App() {
   return (
     <div style={page}>
       <div style={headerBar}>
-        <img src="/icon.png" alt="HermitClaw" style={headerIcon} />
-        <span style={headerTitle}>HermitClaw</span>
+        <img src="/icon.png" alt="Myxo" style={headerIcon} />
+        <span style={headerTitle}>Myxo</span>
       </div>
       <div style={twoPane}>
         {/* Left pane — Game world */}

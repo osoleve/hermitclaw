@@ -7,10 +7,10 @@ import os
 import re
 from datetime import datetime
 
-from hermitclaw.config import config
-from hermitclaw.prompts import IMPORTANCE_PROMPT
+from myxo.config import config
+from myxo.prompts import IMPORTANCE_PROMPT
 
-logger = logging.getLogger("hermitclaw.memory")
+logger = logging.getLogger("myxo.memory")
 
 STREAM_FILENAME = "memory_stream.jsonl"
 

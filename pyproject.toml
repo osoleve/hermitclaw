@@ -1,7 +1,7 @@
 [project]
-name = "hermitclaw"
+name = "myxo"
 version = "0.1.0"
-description = "A tiny AI creature that lives in a folder on your computer"
+description = "A Fold-native autonomous AI creature"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.104.0",
@@ -14,4 +14,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["hermitclaw*"]
+include = ["myxo*"]

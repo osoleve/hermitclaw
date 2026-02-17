@@ -1,4 +1,4 @@
-"""The thinking loop — the heart of the hermit crab."""
+"""The thinking loop — the heart of the creature."""
 
 import asyncio
 import base64
@@ -8,14 +8,14 @@ import os
 import random
 from datetime import datetime, date
 
-from hermitclaw.config import config
-from hermitclaw.memory import MemoryStream
-from hermitclaw.prompts import main_system_prompt, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE
-from hermitclaw.fold_client import evaluate as fold_evaluate
+from myxo.config import config
+from myxo.memory import MemoryStream
+from myxo.prompts import main_system_prompt, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE
+from myxo.fold_client import evaluate as fold_evaluate
 
-logger = logging.getLogger("hermitclaw.brain")
+logger = logging.getLogger("myxo.brain")
 
-LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "hermitclaw.log.jsonl")
+LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "myxo.log.jsonl")
 
 
 def _serialize_input(input_list: list) -> list:
@@ -588,7 +588,7 @@ class Brain:
                     elif tool_name == "respond":
                         result = await self._handle_respond(tool_args)
                     elif tool_name == "fold":
-                        session = f"hermitclaw-{self.identity['name'].lower()}"
+                        session = f"myxo-{self.identity['name'].lower()}"
                         result = await asyncio.to_thread(
                             fold_evaluate, tool_args.get("expression", ""), session
                         )

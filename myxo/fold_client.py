@@ -8,7 +8,7 @@ import uuid
 import subprocess
 import logging
 
-logger = logging.getLogger("hermitclaw.fold")
+logger = logging.getLogger("myxo.fold")
 
 # The Fold's REPL directory (where the daemon writes its ready file)
 FOLD_ROOT = os.path.expanduser("~/fold")

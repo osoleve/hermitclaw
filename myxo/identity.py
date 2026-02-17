@@ -1,4 +1,4 @@
-"""Identity generation — every crab is unique."""
+"""Identity generation — every creature is unique."""
 
 import hashlib
 import json
@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from hermitclaw.config import config
+from myxo.config import config
 
 
 def identity_path() -> str:
@@ -190,7 +190,7 @@ def create_identity() -> dict:
     """Run the onboarding flow: name it, mash keyboard, generate genome."""
     print()
     print("  ==============================")
-    print("  A new HermitClaw is being born.")
+    print("  A new creature is being born.")
     print("  ==============================")
     print()
     name = input("  What will you name it? > ").strip()

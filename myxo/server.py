@@ -15,14 +15,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from hermitclaw.brain import Brain
-from hermitclaw.config import config, get_crab_config
-from hermitclaw.identity import _derive_traits
-from hermitclaw.provider import create_provider
+from myxo.brain import Brain
+from myxo.config import config, get_crab_config
+from myxo.identity import _derive_traits
+from myxo.provider import create_provider
 
-logger = logging.getLogger("hermitclaw.server")
+logger = logging.getLogger("myxo.server")
 
-app = FastAPI(title="HermitClaw")
+app = FastAPI(title="Myxo")
 brains: dict[str, Brain] = {}  # crab_id -> Brain
 
 

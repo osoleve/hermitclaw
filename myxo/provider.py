@@ -5,7 +5,7 @@ import logging
 import re
 import openai
 
-logger = logging.getLogger("hermitclaw.provider")
+logger = logging.getLogger("myxo.provider")
 
 
 # --- Tool definitions ---
@@ -102,7 +102,7 @@ class Provider:
 
 
 class OpenAIProvider(Provider):
-    """Uses OpenAI Responses API — the original HermitClaw provider."""
+    """Uses OpenAI Responses API."""
 
     def __init__(self, api_key: str, model: str, embedding_model: str = "text-embedding-3-small"):
         self.api_key = api_key

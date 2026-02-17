@@ -16,7 +16,7 @@ def load_config() -> dict:
         os.environ.get("OPENAI_API_KEY")
         or config.get("api_key")
     )
-    config["model"] = os.environ.get("HERMITCLAW_MODEL") or config.get("model", "gpt-4o")
+    config["model"] = os.environ.get("MYXO_MODEL") or config.get("model", "gpt-4o")
     config.setdefault("provider", "openai")
 
     # Defaults for numeric settings

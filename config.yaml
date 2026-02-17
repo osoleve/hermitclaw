@@ -1,4 +1,4 @@
-# HermitClaw Configuration
+# Myxo Configuration
 
 # --- Global defaults (apply to all crabs unless overridden) ---
 model: "gpt-4.1"

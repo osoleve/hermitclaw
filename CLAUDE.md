@@ -4,23 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-HermitClaw is an autonomous AI creature that lives in The Fold — a content-addressable homoiconic computation environment built in Chez Scheme. It thinks continuously on a timer, computes exclusively through Scheme expressions evaluated in the Fold, builds up memories, reflects, and plans. Multiple creatures can run simultaneously, each with its own Fold session and `{name}_box/` directory for state.
+Myxo is an autonomous AI creature that lives in The Fold — a content-addressable homoiconic computation environment built in Chez Scheme. It thinks continuously on a timer, computes exclusively through Scheme expressions evaluated in the Fold, builds up memories, reflects, and plans. Multiple creatures can run simultaneously, each with its own Fold session and `{name}_box/` directory for state.
 
-This is a **Fold-native model environment**: the creature's sole computational tool is the Fold. No shell, no Python execution, no web search. All computation goes through Fold expressions evaluated via Unix domain socket to the Fold daemon at `~/fold/`.
+This is a **Fold-native model environment**: the creature's sole computational tool is the Fold. No shell, no Python execution, no web search. All computation goes through Fold expressions evaluated via Unix domain socket to the Fold daemon. The Fold source lives in the `fold/` submodule.
 
 ## Commands
 
 ```bash
 # Backend
 pip install -e .
-python hermitclaw/main.py          # discovers *_box/ dirs, starts all creatures
-HERMITCLAW_PORT=9000 python hermitclaw/main.py  # custom port (default 8080)
+python myxo/main.py                # discovers *_box/ dirs, starts all creatures
+MYXO_PORT=9000 python myxo/main.py # custom port (default 8080)
 
 # Frontend (dev with hot-reload on :5173, proxies to backend on :8080)
 cd frontend && npm install && npm run dev
 
 # Frontend (production build)
 cd frontend && npm run build       # outputs to frontend/dist/
+
+# Update Fold submodule
+scripts/update-fold-submodule.sh   # also runs hourly via cron
 ```
 
 No test suite exists. No linter is configured.
@@ -50,13 +53,13 @@ Both share the same `_FUNCTION_TOOLS` definitions (fold, respond, move). The `cr
 
 ### The Fold Integration (`fold_client.py`)
 
-Thin client that talks to the Fold daemon via Unix domain socket with length-prefixed S-expression messages. Each creature gets a persistent session (`hermitclaw-{name}`). The daemon is auto-started if not running.
+Thin client that talks to the Fold daemon via Unix domain socket with length-prefixed S-expression messages. Each creature gets a persistent session (`myxo-{name}`). The daemon is auto-started if not running.
 
-The Fold provides a skill lattice (verified DAG of computational capabilities), content-addressed storage, a module system, and fuel-bounded evaluation. See `~/fold/CLAUDE.md` for full Fold architecture.
+The Fold provides a skill lattice (verified DAG of computational capabilities), content-addressed storage, a module system, and fuel-bounded evaluation. See `fold/CLAUDE.md` for full Fold architecture.
 
 ### Config Layering (`config.py`)
 
-`config.yaml` has global defaults at the top level and per-creature overrides under `crabs:`. `get_crab_config(crab_id)` merges them into a flat dict. Environment variables (`OPENAI_API_KEY`, `HERMITCLAW_MODEL`, `HERMITCLAW_PORT`) override config file values.
+`config.yaml` has global defaults at the top level and per-creature overrides under `crabs:`. `get_crab_config(crab_id)` merges them into a flat dict. Environment variables (`OPENAI_API_KEY`, `MYXO_MODEL`, `MYXO_PORT`) override config file values.
 
 ### Memory System (`memory.py`)
 
@@ -87,4 +90,4 @@ React 18 + TypeScript + Vite. Single-page app with two panes: pixel-art room (HT
 
 ## Phase 2 Direction
 
-This architecture is designed to migrate toward the Fold's RLM v2 framework (`lattice/pipeline/rlm2.ss`, `boundary/pipeline/rlm2-drive.ss`). RLM v2 provides a HUD-based state machine with a structured action language, CAS trajectory recording, fuel budgeting, and episodic memory. The migration path: free-form Fold expressions -> shaped RLM v2 actions -> Python brain becomes a thin event bridge -> creature cognition IS the Fold.
+This architecture is designed to migrate toward the Fold's RLM v2 framework (`fold/lattice/pipeline/rlm2.ss`, `fold/boundary/pipeline/rlm2-drive.ss`). RLM v2 provides a HUD-based state machine with a structured action language, CAS trajectory recording, fuel budgeting, and episodic memory. The migration path: free-form Fold expressions -> shaped RLM v2 actions -> Python brain becomes a thin event bridge -> creature cognition IS the Fold.
