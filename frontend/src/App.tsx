@@ -58,25 +58,23 @@ function renderInputItem(item: Record<string, unknown>, phase: Phase): Msg | nul
  *  - web_search_call
  */
 function renderFunctionCall(name: string, rawArgs: unknown, phase: Phase): Msg | null {
+  const parsed = (() => {
+    try { return typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs; }
+    catch { return rawArgs; }
+  })() as Record<string, string> | undefined;
+
   if (name === "respond") {
-    try {
-      const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
-      return { side: "right", text: (args as Record<string, string>).message, phase, isRespond: true };
-    } catch {
-      return { side: "right", text: String(rawArgs), phase, isRespond: true };
-    }
+    const text = parsed?.message || String(rawArgs || "");
+    return text ? { side: "right", text, phase, isRespond: true } : null;
   }
   let cmd: string;
   if (name === "shell") {
-    try {
-      const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
-      cmd = `$ ${(args as Record<string, string>).command}`;
-    } catch {
-      cmd = `$ ${rawArgs}`;
-    }
+    cmd = parsed?.command ? `$ ${parsed.command}` : "$ (empty)";
+  } else if (name === "move") {
+    cmd = `[move → ${parsed?.location || "?"}]`;
   } else {
     const args = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs, null, 2);
-    cmd = `[${name}] ${args}`;
+    cmd = `[${name || "?"}] ${args}`;
   }
   return { side: "right", text: cmd, phase };
 }
