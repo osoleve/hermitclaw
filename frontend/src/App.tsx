@@ -44,6 +44,10 @@ function renderInputItem(item: Record<string, unknown>, phase: Phase): Msg | nul
   if (item.type === "function_call_output") {
     return { side: "left", text: item.output as string, phase };
   }
+  // Local provider: tool result
+  if (item.role === "tool") {
+    return { side: "left", text: item.content as string, phase };
+  }
   return null;
 }
 
@@ -53,7 +57,32 @@ function renderInputItem(item: Record<string, unknown>, phase: Phase): Msg | nul
  *  - function_call (tool invocation)
  *  - web_search_call
  */
+function renderFunctionCall(name: string, rawArgs: unknown, phase: Phase): Msg | null {
+  if (name === "respond") {
+    try {
+      const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+      return { side: "right", text: (args as Record<string, string>).message, phase, isRespond: true };
+    } catch {
+      return { side: "right", text: String(rawArgs), phase, isRespond: true };
+    }
+  }
+  let cmd: string;
+  if (name === "shell") {
+    try {
+      const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+      cmd = `$ ${(args as Record<string, string>).command}`;
+    } catch {
+      cmd = `$ ${rawArgs}`;
+    }
+  } else {
+    const args = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs, null, 2);
+    cmd = `[${name}] ${args}`;
+  }
+  return { side: "right", text: cmd, phase };
+}
+
 function renderOutputItem(item: Record<string, unknown>, phase: Phase): Msg | null {
+  // OpenAI Responses API: SDK message object
   if (item.type === "message") {
     const content = item.content as Array<Record<string, unknown>>;
     const text = content
@@ -62,34 +91,25 @@ function renderOutputItem(item: Record<string, unknown>, phase: Phase): Msg | nu
     if (text) return { side: "right", text, phase };
     return null;
   }
+  // OpenAI Responses API: SDK function_call object
   if (item.type === "function_call") {
-    if (item.name === "respond") {
-      try {
-        const args = typeof item.arguments === "string"
-          ? JSON.parse(item.arguments as string)
-          : item.arguments;
-        return { side: "right", text: (args as Record<string, string>).message, phase, isRespond: true };
-      } catch {
-        return { side: "right", text: String(item.arguments), phase, isRespond: true };
-      }
+    return renderFunctionCall(item.name as string, item.arguments, phase);
+  }
+  // Local provider (Chat Completions): assistant message with tool_calls
+  if (item._local_type === "assistant_with_tools") {
+    const msg = item._message as Record<string, unknown>;
+    const tcs = msg?.tool_calls as Array<Record<string, unknown>> | undefined;
+    if (tcs) {
+      // Return first tool call (usually only one per output item)
+      const tc = tcs[0];
+      const fn = tc?.function as Record<string, unknown>;
+      if (fn) return renderFunctionCall(fn.name as string, fn.arguments, phase);
     }
-    let cmd: string;
-    if (item.name === "shell") {
-      try {
-        const args = typeof item.arguments === "string"
-          ? JSON.parse(item.arguments as string)
-          : item.arguments;
-        cmd = `$ ${(args as Record<string, string>).command}`;
-      } catch {
-        cmd = `$ ${item.arguments}`;
-      }
-    } else {
-      const args = typeof item.arguments === "string"
-        ? item.arguments
-        : JSON.stringify(item.arguments, null, 2);
-      cmd = `[${item.name}] ${args}`;
-    }
-    return { side: "right", text: cmd, phase };
+    return null;
+  }
+  // Local provider: plain assistant message
+  if (item.role === "assistant" && item.content) {
+    return { side: "right", text: item.content as string, phase };
   }
   if (item.type === "web_search_call") {
     return { side: "right", text: "[web search]", phase };
