@@ -124,7 +124,7 @@ class Brain:
     _PDF_EXTS = {".pdf"}
     _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
     # Internal files the crab/system manages — never trigger alerts
-    _IGNORE_FILES = {"memory_stream.jsonl", "identity.json"}
+    _IGNORE_FILES = {"memory_stream.jsonl", "identity.json", "outbox.jsonl", "outbox_read.json"}
     # Internal files that live in the root but shouldn't trigger inbox alerts
     _INTERNAL_ROOT_FILES = {"projects.md"}
 
@@ -154,6 +154,9 @@ class Brain:
         # File tracking — populated in run()
         self._seen_env_files: set[str] = set()
         self._inbox_pending: list[dict] = []
+
+        # Outbox counter — loaded from existing file in run()
+        self._outbox_count: int = 0
 
         # Planning state
         self._cycles_since_plan: int = 0
@@ -318,6 +321,28 @@ class Brain:
 
         return reply
 
+    async def _handle_outbox(self, args: dict) -> str:
+        """Handle the outbox tool — fire-and-forget message to owner."""
+        msg = args.get("message", "")
+        self._outbox_count += 1
+        msg_id = f"out_{self._outbox_count:04d}"
+        timestamp = datetime.now().isoformat()
+
+        entry = {"id": msg_id, "timestamp": timestamp, "message": msg, "read": False}
+        outbox_path = os.path.join(self.env_path, "outbox.jsonl")
+        try:
+            with open(outbox_path, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            logger.error(f"Failed to write outbox: {e}")
+
+        await self._broadcast({
+            "event": "outbox",
+            "data": {"id": msg_id, "timestamp": timestamp, "message": msg},
+        })
+
+        return f"Message left in outbox ({msg_id})."
+
     def receive_user_message(self, text: str):
         """Queue a message from the user to be injected in the next think cycle."""
         self._user_message = text
@@ -405,6 +430,8 @@ class Brain:
             return {"type": "moving", "detail": f"Going to {loc}"}
         if tool_name == "respond":
             return {"type": "conversing", "detail": "Talking to someone..."}
+        if tool_name == "outbox":
+            return {"type": "messaging", "detail": "Leaving a note..."}
         if tool_name == "fold":
             expr = tool_args.get("expression", "")
             detail = expr[:60] + ("..." if len(expr) > 60 else "")
@@ -624,6 +651,8 @@ class Brain:
                         result = await self._handle_move(tool_args)
                     elif tool_name == "respond":
                         result = await self._handle_respond(tool_args)
+                    elif tool_name == "outbox":
+                        result = await self._handle_outbox(tool_args)
                     elif tool_name == "fold":
                         session = f"myxo-{self.identity['name'].lower()}"
                         result = await asyncio.to_thread(
@@ -841,6 +870,15 @@ class Brain:
 
         # Heavy init — runs in background thread so the event loop stays free
         self.stream = await asyncio.to_thread(MemoryStream, self.env_path, self.provider)
+
+        # Load outbox counter from existing file
+        outbox_path = os.path.join(self.env_path, "outbox.jsonl")
+        if os.path.isfile(outbox_path):
+            try:
+                with open(outbox_path) as f:
+                    self._outbox_count = sum(1 for _ in f)
+            except Exception:
+                self._outbox_count = 0
         # Mark subdirectory files as "seen" but leave root-level user files
         # (PDFs, images, etc.) as unseen so they trigger inbox alerts on first cycle
         all_files = self._scan_env_files()

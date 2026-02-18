@@ -78,6 +78,25 @@ _FUNCTION_TOOLS = [
             "required": ["location"],
         },
     },
+    {
+        "name": "outbox",
+        "description": (
+            "Leave an async message for your owner — fire-and-forget, no reply expected. "
+            "Use this for requests (e.g. Fold modules you'd like added), observations, "
+            "notes, or anything you want them to see when they check in. "
+            "Unlike respond, this does NOT wait for a reply and won't interrupt your thinking."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "The message to leave for your owner",
+                }
+            },
+            "required": ["message"],
+        },
+    },
 ]
 
 
@@ -109,8 +128,8 @@ class OpenAIProvider(Provider):
         self.model = model
         self.embedding_model = embedding_model
 
-    def _client(self) -> openai.OpenAI:
-        return openai.OpenAI(api_key=self.api_key)
+    def _client(self, timeout: float = 120) -> openai.OpenAI:
+        return openai.OpenAI(api_key=self.api_key, timeout=timeout)
 
     def _tools(self):
         return [{"type": "function", **t} for t in _FUNCTION_TOOLS]
@@ -149,7 +168,7 @@ class OpenAIProvider(Provider):
         }
 
     def embed(self, text):
-        response = self._client().embeddings.create(
+        response = self._client(timeout=30).embeddings.create(
             model=self.embedding_model,
             input=text,
         )
@@ -176,8 +195,8 @@ class LocalProvider(Provider):
         self.embedding_model = embedding_model
         self.embedding_base_url = embedding_base_url
 
-    def _client(self) -> openai.OpenAI:
-        return openai.OpenAI(base_url=self.base_url, api_key=self.api_key)
+    def _client(self, timeout: float = 120) -> openai.OpenAI:
+        return openai.OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=timeout)
 
     def _tools(self):
         """Chat Completions format for tool definitions."""
@@ -331,7 +350,7 @@ class LocalProvider(Provider):
     def embed(self, text):
         if not self.embedding_api_key:
             return []
-        kwargs = {"api_key": self.embedding_api_key}
+        kwargs = {"api_key": self.embedding_api_key, "timeout": 30}
         if self.embedding_base_url:
             kwargs["base_url"] = self.embedding_base_url
         client = openai.OpenAI(**kwargs)

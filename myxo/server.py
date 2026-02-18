@@ -270,6 +270,66 @@ async def post_snapshot(request: Request):
     brain.latest_snapshot = body.get("image")
     return {"ok": True}
 
+@app.get("/api/outbox")
+async def get_outbox(request: Request):
+    """Get all outbox messages for a crab."""
+    brain = _get_brain(request)
+    outbox_path = os.path.join(brain.env_path, "outbox.jsonl")
+    read_path = os.path.join(brain.env_path, "outbox_read.json")
+
+    # Load messages
+    messages = []
+    if os.path.isfile(outbox_path):
+        try:
+            with open(outbox_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        messages.append(json.loads(line))
+        except Exception:
+            pass
+
+    # Load read state
+    read_ids: set[str] = set()
+    if os.path.isfile(read_path):
+        try:
+            with open(read_path) as f:
+                read_ids = set(json.load(f))
+        except Exception:
+            pass
+
+    # Annotate messages with read state
+    for msg in messages:
+        msg["read"] = msg["id"] in read_ids
+
+    return messages
+
+
+@app.post("/api/outbox/{message_id}/read")
+async def mark_outbox_read(request: Request, message_id: str):
+    """Mark an outbox message as read."""
+    brain = _get_brain(request)
+    read_path = os.path.join(brain.env_path, "outbox_read.json")
+
+    read_ids: list[str] = []
+    if os.path.isfile(read_path):
+        try:
+            with open(read_path) as f:
+                read_ids = json.load(f)
+        except Exception:
+            pass
+
+    if message_id not in read_ids:
+        read_ids.append(message_id)
+        try:
+            with open(read_path, "w") as f:
+                json.dump(read_ids, f)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    return {"ok": True}
+
+
 @app.get("/api/files")
 async def get_files(request: Request):
     brain = _get_brain(request)

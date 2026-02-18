@@ -17,8 +17,15 @@ interface CrabInfo {
   thought_count: number;
 }
 
+interface OutboxMessage {
+  id: string;
+  timestamp: string;
+  message: string;
+  read: boolean;
+}
+
 type Phase = "normal" | "dream" | "planning";
-type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean; isOwner?: boolean };
+type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean; isOwner?: boolean; isOutbox?: boolean };
 
 /**
  * Render an INPUT item — we only care about:
@@ -78,6 +85,10 @@ function renderFunctionCall(name: string, rawArgs: unknown, phase: Phase): Msg |
   if (name === "respond") {
     const text = parsed?.message || String(rawArgs || "");
     return text ? { side: "right", text, phase, isRespond: true } : null;
+  }
+  if (name === "outbox") {
+    const text = parsed?.message || String(rawArgs || "");
+    return text ? { side: "right", text, phase, isOutbox: true } : null;
   }
   let cmd: string;
   if (name === "fold") {
@@ -139,6 +150,8 @@ export default function App() {
   const [hasNew, setHasNew] = useState(false);
   const [crabName, setCrabName] = useState("myxo");
   const [focusMode, setFocusMode] = useState(false);
+  const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>([]);
+  const [outboxOpen, setOutboxOpen] = useState(false);
   const [crabs, setCrabs] = useState<CrabInfo[]>([]);
   const [activeCrab, setActiveCrab] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -174,6 +187,9 @@ export default function App() {
       if (msg.event === "alert") setAlert(true);
       if (msg.event === "activity") setActivity(msg.data);
       if (msg.event === "focus_mode") setFocusMode(msg.data.enabled);
+      if (msg.event === "outbox") {
+        setOutboxMessages((prev) => [...prev, { ...msg.data, read: false }]);
+      }
       if (msg.event === "conversation") {
         if (msg.data.state === "waiting") {
           setConversing(true);
@@ -203,19 +219,22 @@ export default function App() {
     const q = `?crab=${crabId}`;
     // Fetch historical calls first (before WS connects) to avoid race
     try {
-      const [rawRes, statusRes, idRes] = await Promise.all([
+      const [rawRes, statusRes, idRes, outboxRes] = await Promise.all([
         fetch(`/api/raw${q}`),
         fetch(`/api/status${q}`),
         fetch(`/api/identity${q}`),
+        fetch(`/api/outbox${q}`),
       ]);
       const rawData = await rawRes.json();
       const statusData = await statusRes.json();
       const idData = await idRes.json();
+      const outboxData: OutboxMessage[] = await outboxRes.json();
       setCalls(rawData);
       if (statusData.position) setPosition(statusData.position);
       if (statusData.focus_mode !== undefined) setFocusMode(statusData.focus_mode);
       setCrabState(statusData.state || "idle");
       if (idData.name) setCrabName(idData.name);
+      setOutboxMessages(outboxData);
     } catch {
       // silently ignore fetch errors
     }
@@ -261,6 +280,8 @@ export default function App() {
     setAlert(false);
     setActivity({ type: "idle", detail: "" });
     setHasNew(false);
+    setOutboxMessages([]);
+    setOutboxOpen(false);
 
     // Update crab name immediately
     const crab = crabs.find((c) => c.id === crabId);
@@ -351,6 +372,15 @@ export default function App() {
     setChatInput("");
   };
 
+  const markOutboxRead = (msgId: string) => {
+    fetch(`/api/outbox/${msgId}/read${crabParam}`, { method: "POST" }).catch(() => {});
+    setOutboxMessages((prev) =>
+      prev.map((m) => (m.id === msgId ? { ...m, read: true } : m))
+    );
+  };
+
+  const unreadCount = outboxMessages.filter((m) => !m.read).length;
+
   const toggleFocusMode = () => {
     const next = !focusMode;
     setFocusMode(next);
@@ -427,6 +457,7 @@ export default function App() {
     };
 
     if (msg.isOwner) return { ...base, borderLeft: `3px solid ${P.owner}` };
+    if (msg.isOutbox) return { ...base, borderLeft: `3px solid ${P.outbox}`, background: "#1a1708" };
     if (msg.isRespond) return { ...base, borderLeft: `3px solid ${P.respond}`, background: "#131a28" };
 
     if (msg.side === "left") {
@@ -454,6 +485,16 @@ export default function App() {
         <div style={headerDot(stateColor(crabState))} />
         <span style={headerTitle}>{crabName}</span>
         <span style={headerState}>{crabState}</span>
+        <div style={{ flex: 1 }} />
+        {outboxMessages.length > 0 && (
+          <button
+            style={outboxBadgeBtn}
+            onClick={() => setOutboxOpen(!outboxOpen)}
+            title="Outbox messages"
+          >
+            Outbox{unreadCount > 0 ? ` (${unreadCount})` : ""}
+          </button>
+        )}
       </div>
       <div style={twoPane}>
         {/* Left pane — Game world */}
@@ -479,6 +520,30 @@ export default function App() {
                   </button>
                 );
               })}
+            </div>
+          )}
+          {outboxOpen && outboxMessages.length > 0 && (
+            <div style={outboxPanel}>
+              <div style={outboxPanelHeader}>
+                <span style={outboxPanelTitle}>Outbox</span>
+                <button style={outboxCloseBtn} onClick={() => setOutboxOpen(false)}>Close</button>
+              </div>
+              <div style={outboxPanelScroll}>
+                {[...outboxMessages].reverse().map((msg) => (
+                  <div
+                    key={msg.id}
+                    style={msg.read ? outboxItemRead : outboxItem}
+                    onClick={() => !msg.read && markOutboxRead(msg.id)}
+                    title={msg.read ? "Read" : "Click to mark as read"}
+                  >
+                    <div style={outboxItemTime}>
+                      {new Date(msg.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      {!msg.read && <span style={outboxUnreadDot} />}
+                    </div>
+                    <div style={outboxItemMsg}>{msg.message}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           <div ref={scrollRef} style={chatScroll}>
@@ -581,6 +646,7 @@ const P = {
   dream:       "#a78bfa",
   plan:        "#34d399",
   respond:     "#f97316",
+  outbox:      "#f5c542",
   owner:       "#60a5fa",
   error:       "#f87171",
   text:        "#c8d6e5",
@@ -927,4 +993,99 @@ const newMsgPill: React.CSSProperties = {
   cursor: "pointer",
   fontFamily: MONO,
   borderTop: `1px solid ${P.border}`,
+};
+
+// ── Outbox ──
+const outboxBadgeBtn: React.CSSProperties = {
+  padding: "5px 12px",
+  borderRadius: 6,
+  border: `1px solid ${P.outbox}44`,
+  background: "transparent",
+  color: P.outbox,
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: "pointer",
+  fontFamily: MONO,
+};
+
+const outboxPanel: React.CSSProperties = {
+  borderBottom: `1px solid ${P.outbox}33`,
+  background: "#14120a",
+  maxHeight: 240,
+  display: "flex",
+  flexDirection: "column",
+  flexShrink: 0,
+};
+
+const outboxPanelHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "8px 16px",
+  borderBottom: `1px solid ${P.border}`,
+};
+
+const outboxPanelTitle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: P.outbox,
+  textTransform: "uppercase",
+  letterSpacing: "0.8px",
+  fontFamily: MONO,
+};
+
+const outboxCloseBtn: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  color: P.dim,
+  fontSize: 11,
+  cursor: "pointer",
+  fontFamily: MONO,
+};
+
+const outboxPanelScroll: React.CSSProperties = {
+  flex: 1,
+  overflowY: "auto",
+  padding: "4px 0",
+};
+
+const outboxItem: React.CSSProperties = {
+  padding: "8px 16px",
+  cursor: "pointer",
+  borderLeft: `3px solid ${P.outbox}`,
+  marginLeft: 12,
+};
+
+const outboxItemRead: React.CSSProperties = {
+  ...outboxItem,
+  borderLeftColor: P.border,
+  opacity: 0.5,
+  cursor: "default",
+};
+
+const outboxItemTime: React.CSSProperties = {
+  fontSize: 10,
+  color: P.dim,
+  fontFamily: MONO,
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  marginBottom: 2,
+};
+
+const outboxUnreadDot: React.CSSProperties = {
+  width: 5,
+  height: 5,
+  borderRadius: "50%",
+  background: P.outbox,
+  display: "inline-block",
+};
+
+const outboxItemMsg: React.CSSProperties = {
+  fontSize: 12,
+  color: P.text,
+  fontFamily: MONO,
+  lineHeight: "1.5",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
 };
