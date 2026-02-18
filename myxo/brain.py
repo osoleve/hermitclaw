@@ -985,7 +985,10 @@ class Brain:
                 await self._broadcast({"event": "activity", "data": activity})
 
                 try:
-                    if tool_name == "move":
+                    # Skip malformed tool calls gracefully
+                    if "_raw" in tool_args:
+                        result = f"Error: malformed tool call — could not parse arguments. Try again with valid JSON."
+                    elif tool_name == "move":
                         result = await self._handle_move(tool_args)
                     elif tool_name == "respond":
                         result = await self._handle_respond(tool_args)

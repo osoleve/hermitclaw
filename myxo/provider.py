@@ -374,9 +374,14 @@ class LocalProvider(Provider):
             # Build an assistant message with tool_calls for history
             tc_dicts = []
             for tc in msg.tool_calls:
+                try:
+                    parsed_args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Malformed tool call arguments for {tc.function.name}: {tc.function.arguments[:100]}")
+                    parsed_args = {"_raw": tc.function.arguments}
                 tool_calls.append({
                     "name": tc.function.name,
-                    "arguments": json.loads(tc.function.arguments),
+                    "arguments": parsed_args,
                     "call_id": tc.id,
                 })
                 tc_dicts.append({
