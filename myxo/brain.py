@@ -499,6 +499,7 @@ class Brain:
 
     async def _synthesize_journal(self):
         """Synthesize recent cycle metadata into an expressive journal entry."""
+        logger.info(f"Journal synthesis check: {len(self._journal_tags)} tags, cycle counter={self._cycles_since_journal}")
         if not self._journal_tags:
             self._cycles_since_journal = 0
             return
@@ -523,7 +524,7 @@ class Brain:
 
         try:
             journal_response = await asyncio.to_thread(
-                self.provider.chat, journal_input, False, JOURNAL_PROMPT, 600
+                self.provider.chat, journal_input, False, JOURNAL_PROMPT, 2000
             )
             journal_text = journal_response["text"] or ""
         except Exception as e:
@@ -533,6 +534,7 @@ class Brain:
             return
 
         if not journal_text.strip():
+            logger.warning("Journal synthesis returned empty text")
             self._journal_tags = []
             self._cycles_since_journal = 0
             return
