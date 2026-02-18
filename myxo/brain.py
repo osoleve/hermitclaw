@@ -492,15 +492,18 @@ class Brain:
             # --- Continue: include focus + relevant memories ---
             nudge = self._build_continue_nudge()
 
+        # Capture pending user message before inbox can clobber it
+        pending_voice = self._user_message
+        self._user_message = None
+
         # If a user message is pending, replace the nudge with the voice framing
-        if self._user_message:
+        if pending_voice:
             nudge = (
-                f"You hear a voice from outside your room say: \"{self._user_message}\"\n\n"
+                f"You hear a voice from outside your room say: \"{pending_voice}\"\n\n"
                 "You can respond with the respond tool, or just keep doing what you're doing."
             )
-            self._user_message = None
 
-        # If inbox files are pending, replace the nudge with an inbox alert
+        # If inbox files are pending, prepend the user message (if any) then show inbox
         if self._inbox_pending:
             parts = []
             names = [f["name"] for f in self._inbox_pending]
@@ -521,6 +524,9 @@ class Brain:
                     parts.append(f"\n📎 {f['name']} (image attached below)")
                 elif f["content"]:
                     parts.append(f"\n📎 {f['name']}:\n{f['content']}")
+            # Preserve user message if both arrived on the same cycle
+            if pending_voice:
+                parts.insert(0, f"You hear a voice from outside your room say: \"{pending_voice}\"\n")
             nudge = "\n".join(parts)
             # Build content with any images
             content_parts: list[dict] = []

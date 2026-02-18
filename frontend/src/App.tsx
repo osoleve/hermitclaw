@@ -148,6 +148,7 @@ export default function App() {
   const [conversing, setConversing] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [hasNew, setHasNew] = useState(false);
+  const [pendingVoice, setPendingVoice] = useState<string | null>(null);
   const [crabName, setCrabName] = useState("myxo");
   const [focusMode, setFocusMode] = useState(false);
   const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>([]);
@@ -178,7 +179,10 @@ export default function App() {
 
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
-      if (msg.event === "api_call") setCalls((prev) => [...prev, msg.data]);
+      if (msg.event === "api_call") {
+        setCalls((prev) => [...prev, msg.data]);
+        setPendingVoice(null);
+      }
       if (msg.event === "position") setPosition(msg.data);
       if (msg.event === "status") {
         setCrabState(msg.data.state);
@@ -360,10 +364,19 @@ export default function App() {
     }
   }, [calls.length]);
 
+  // Scroll to bottom when user sends a message
+  useEffect(() => {
+    if (pendingVoice && scrollRef.current) {
+      requestAnimationFrame(() => {
+        scrollRef.current!.scrollTop = scrollRef.current!.scrollHeight;
+      });
+    }
+  }, [pendingVoice]);
 
   const sendMessage = () => {
     const text = chatInput.trim();
     if (!text) return;
+    setPendingVoice(text);
     fetch(`/api/message${crabParam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -590,6 +603,13 @@ export default function App() {
                 </div>
               );
             })}
+            {pendingVoice && (
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ ...cardBase, borderLeft: `3px solid ${P.owner}`, opacity: 0.6 }}>
+                  <pre style={cardText}>{pendingVoice}</pre>
+                </div>
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
           </div>
