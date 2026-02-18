@@ -4,6 +4,16 @@ import os
 import yaml
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+ENV_PATH = os.path.join(os.path.dirname(__file__), "..", ".env")
+
+# Load .env if it exists (no dependency needed)
+if os.path.isfile(ENV_PATH):
+    with open(ENV_PATH) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip())
 
 
 def load_config() -> dict:

@@ -131,6 +131,9 @@ class Brain:
     # Planning frequency — plan every N think cycles
     PLAN_INTERVAL = 10
 
+    # Tool loop circuit breaker — max tool calls per think cycle
+    MAX_TOOL_CALLS = 12
+
     def __init__(self, identity: dict, env_path: str, provider=None, crab_config: dict = None):
         self.identity = identity
         self.env_path = env_path
@@ -408,20 +411,50 @@ class Brain:
             return {"type": "computing", "detail": f"Fold: {detail}"}
         return {"type": "working", "detail": tool_name}
 
+    @staticmethod
+    def _summarize_tool_loop(loop_log: list, seen_errors: dict) -> str:
+        """Summarize a tool loop into a compact context entry."""
+        successes = []
+        errors = []
+        for tool_name, args_brief, result_brief in loop_log:
+            is_err = (result_brief.startswith("Error:")
+                      or "not found" in result_brief.lower()
+                      or "not bound" in result_brief.lower())
+            line = f"  {tool_name}({args_brief[:50]}): {result_brief[:100]}"
+            if is_err:
+                errors.append(line)
+            else:
+                successes.append(line)
+
+        parts = [f"[Tool loop: {len(loop_log)} calls]"]
+        if successes:
+            parts.append(f"Succeeded ({len(successes)}):")
+            parts.extend(successes[:8])
+            if len(successes) > 8:
+                parts.append(f"  ... and {len(successes) - 8} more")
+        if errors:
+            unique_errors = list(dict.fromkeys(errors))  # deduplicate, preserve order
+            parts.append(f"Errors ({len(errors)} total, {len(unique_errors)} unique):")
+            parts.extend(unique_errors[:5])
+            if len(unique_errors) > 5:
+                parts.append(f"  ... and {len(unique_errors) - 5} more unique errors")
+
+        return "\n".join(parts)
+
     # --- Input building ---
 
     def _build_input(self) -> tuple[str, list[dict]]:
         instructions = main_system_prompt(self.identity, self._current_focus)
 
         input_list = []
-        recent = [e for e in self.events if e["type"] in ("thought", "tool_call", "reflection")]
+        recent = [e for e in self.events if e["type"] in ("thought", "tool_summary", "reflection")]
         recent = recent[-config["max_thoughts_in_context"]:]
 
         for ev in recent:
             if ev["type"] == "thought":
                 input_list.append({"role": "assistant", "content": ev["text"]})
-            elif ev["type"] == "tool_call":
-                input_list.append({"role": "assistant", "content": f"[Used {ev['tool']} tool]"})
+            elif ev["type"] == "tool_summary":
+                input_list.append({"role": "assistant", "content": ev["text"]})
             elif ev["type"] == "reflection":
                 input_list.append({"role": "assistant", "content": f"[Reflection: {ev['text'][:200]}...]"})
 
@@ -564,6 +597,9 @@ class Brain:
         await self._emit_api_call(instructions, input_list, response)
 
         was_active = bool(response["tool_calls"])
+        tool_call_count = 0
+        loop_log = []       # (tool_name, args_brief, result_brief) for summary
+        seen_errors = {}    # error_string -> count, for dedup
 
         while response["tool_calls"]:
             if response.get("text"):
@@ -575,6 +611,7 @@ class Brain:
                 tool_name = tc["name"]
                 tool_args = tc["arguments"]
                 call_id = tc["call_id"]
+                tool_call_count += 1
 
                 await self._emit("tool_call", tool=tool_name, args=tool_args)
 
@@ -597,10 +634,50 @@ class Brain:
                 except Exception as e:
                     result = f"Error: {e}"
 
+                # Error deduplication: collapse repeated errors in what the LLM sees
+                result_for_input = result
+                is_error = (result.startswith("Error:")
+                            or "not found" in result.lower()
+                            or "not bound" in result.lower())
+                if is_error:
+                    error_key = result.strip()
+                    seen_errors[error_key] = seen_errors.get(error_key, 0) + 1
+                    if seen_errors[error_key] > 1:
+                        result_for_input = f"(Repeated error, seen {seen_errors[error_key]}x: {error_key[:80]})"
+
+                # Collect for post-loop summary
+                args_brief = ""
+                if tool_name == "fold":
+                    args_brief = tool_args.get("expression", "")[:80]
+                elif tool_name == "move":
+                    args_brief = tool_args.get("location", "")
+                loop_log.append((tool_name, args_brief, result[:150]))
+
                 await self._broadcast({"event": "activity", "data": {"type": "idle", "detail": ""}})
                 await self._emit("tool_result", tool=tool_name, output=result)
 
-                input_list.append(self.provider.make_tool_result(call_id, result))
+                input_list.append(self.provider.make_tool_result(call_id, result_for_input))
+
+            # Circuit breaker: cap tool calls per think cycle
+            if tool_call_count >= Brain.MAX_TOOL_CALLS:
+                logger.info(f"Tool loop hit cap ({tool_call_count} calls), forcing summary")
+                input_list.append({
+                    "role": "user",
+                    "content": (
+                        f"You've made {tool_call_count} tool calls this cycle. "
+                        "Pause here — summarize what you learned, what worked, "
+                        "what didn't, and what you want to try next cycle."
+                    ),
+                })
+                try:
+                    response = await asyncio.to_thread(
+                        self.provider.chat, input_list, False, instructions
+                    )
+                except Exception as e:
+                    logger.error(f"LLM cap-off call failed: {e}")
+                    break
+                await self._emit_api_call(instructions, input_list, response)
+                break
 
             try:
                 response = await asyncio.to_thread(
@@ -624,6 +701,11 @@ class Brain:
                 )
             except Exception as e:
                 logger.error(f"Memory add failed: {e}")
+
+        # Emit tool loop summary for context window
+        if loop_log:
+            summary = self._summarize_tool_loop(loop_log, seen_errors)
+            await self._emit("tool_summary", text=summary)
 
         return was_active
 

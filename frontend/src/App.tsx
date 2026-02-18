@@ -137,7 +137,7 @@ export default function App() {
   const [conversing, setConversing] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [hasNew, setHasNew] = useState(false);
-  const [crabName, setCrabName] = useState("the crab");
+  const [crabName, setCrabName] = useState("myxo");
   const [focusMode, setFocusMode] = useState(false);
   const [crabs, setCrabs] = useState<CrabInfo[]>([]);
   const [activeCrab, setActiveCrab] = useState("");
@@ -413,25 +413,47 @@ export default function App() {
     seenInputItems = call.input.length + call.output.length;
   });
 
-  const stateLabel = (state: string) => {
-    if (state === "thinking") return "thinking";
-    if (state === "reflecting") return "reflecting";
-    if (state === "planning") return "planning";
-    return "idle";
+  const stateColor = (s: string) => {
+    if (s === "thinking") return P.glow;
+    if (s === "reflecting") return P.dream;
+    if (s === "planning") return P.plan;
+    return P.dim;
   };
 
-  const stateColor = (state: string) => {
-    if (state === "thinking") return "#007aff";
-    if (state === "reflecting") return "#7c3aed";
-    if (state === "planning") return "#0d9488";
-    return "#999";
+  // Determine card style based on message type
+  const cardStyle = (msg: Msg): React.CSSProperties => {
+    const base: React.CSSProperties = {
+      ...cardBase,
+    };
+
+    if (msg.isOwner) return { ...base, borderLeft: `3px solid ${P.owner}` };
+    if (msg.isRespond) return { ...base, borderLeft: `3px solid ${P.respond}`, background: "#131a28" };
+
+    if (msg.side === "left") {
+      // Tool results — visually subordinate
+      return { ...base, color: P.dim, fontSize: 11, padding: "6px 14px" };
+    }
+
+    // Right side (creature output)
+    if (msg.phase === "dream") return { ...base, borderLeft: `3px solid ${P.dream}`, background: "#140f20" };
+    if (msg.phase === "planning") return { ...base, borderLeft: `3px solid ${P.plan}`, background: "#0f1a18" };
+
+    // Fold expressions — amber accent
+    if (msg.text.startsWith(">")) return { ...base, borderLeft: `3px solid ${P.computation}`, background: "#111a28" };
+
+    // Move commands
+    if (msg.text.startsWith("[move")) return { ...base, color: P.dim, fontSize: 11, padding: "6px 14px" };
+
+    // Normal thought — teal accent
+    return { ...base, borderLeft: `3px solid ${P.glow}` };
   };
 
   return (
     <div style={page}>
       <div style={headerBar}>
-        <img src="/icon.png" alt="Myxo" style={headerIcon} />
-        <span style={headerTitle}>Myxo</span>
+        <div style={headerDot(stateColor(crabState))} />
+        <span style={headerTitle}>{crabName}</span>
+        <span style={headerState}>{crabState}</span>
       </div>
       <div style={twoPane}>
         {/* Left pane — Game world */}
@@ -441,7 +463,7 @@ export default function App() {
 
         {/* Right pane — Chat feed */}
         <div style={chatPane}>
-          {/* Crab switcher */}
+          {/* Creature switcher */}
           {crabs.length > 1 && (
             <div style={switcherBar}>
               {crabs.map((c) => {
@@ -452,10 +474,8 @@ export default function App() {
                     style={isActive ? switcherBtnActive : switcherBtnInactive}
                     onClick={() => switchCrab(c.id)}
                   >
+                    <span style={switcherDot(stateColor(c.state))} />
                     <span>{c.name}</span>
-                    <span style={{ ...switcherState, color: isActive ? "rgba(255,255,255,0.8)" : stateColor(c.state) }}>
-                      {stateLabel(c.state)}
-                    </span>
                   </button>
                 );
               })}
@@ -465,9 +485,9 @@ export default function App() {
           <div style={container}>
             {messages.length === 0 && (
               <div style={emptyState}>
-                <div style={emptyIcon}>~</div>
+                <div style={emptyDot} />
                 <div style={emptyTitle}>Waiting for thoughts...</div>
-                <div style={emptySubtitle}>{crabName} is getting ready</div>
+                <div style={emptySubtitle}>{crabName} is waking up</div>
               </div>
             )}
             {messages.map((msg, i) => {
@@ -488,31 +508,9 @@ export default function App() {
                 );
               }
 
-              const isLeft = msg.side === "left";
-              const p = msg.phase;
-
-              const bubbleStyle = msg.isRespond
-                ? respondBubble
-                : msg.isOwner
-                ? ownerBubble
-                : p === "dream"
-                ? isLeft ? dreamBubbleLeft : dreamBubbleRight
-                : p === "planning"
-                ? isLeft ? planBubbleLeft : planBubbleRight
-                : isLeft ? bubbleLeft : bubbleRight;
-
-              const textColor = isLeft && p === "normal" && !msg.isRespond && !msg.isOwner ? "#111" : "#fff";
-
               return (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex",
-                    justifyContent: isLeft ? "flex-start" : "flex-end",
-                    marginBottom: 6,
-                  }}
-                >
-                  <div style={bubbleStyle}>
+                <div key={i} style={{ marginBottom: 4 }}>
+                  <div style={cardStyle(msg)}>
                     {msg.image && (
                       <img
                         src={msg.image}
@@ -520,7 +518,7 @@ export default function App() {
                         alt="Room snapshot"
                       />
                     )}
-                    <pre style={{ ...bubbleText, color: textColor }}>
+                    <pre style={cardText}>
                       {msg.text}
                     </pre>
                   </div>
@@ -572,19 +570,29 @@ export default function App() {
   );
 }
 
-// ── Shared palette ──
-const DARK = "#0f0f1a";
-const DARK_MID = "#1a1a2e";
-const DARK_BORDER = "#2a2a4a";
-const SURFACE = "#f4f4f8";
-const BORDER = "#e2e2ea";
-const MONO = "'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace";
-const SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+// ── Palette shorthand ──
+const P = {
+  void:        "#080c14",
+  surface:     "#0f1520",
+  border:      "#1a2535",
+  glow:        "#00e5a0",
+  glowCyan:    "#00c8ff",
+  computation: "#f0b040",
+  dream:       "#a78bfa",
+  plan:        "#34d399",
+  respond:     "#f97316",
+  owner:       "#60a5fa",
+  error:       "#f87171",
+  text:        "#c8d6e5",
+  dim:         "#5a6a7a",
+};
+
+const MONO = "'IBM Plex Mono', monospace";
 
 const page: React.CSSProperties = {
-  background: DARK,
-  color: "#111",
-  fontFamily: SANS,
+  background: P.void,
+  color: P.text,
+  fontFamily: MONO,
   height: "100vh",
   overflow: "hidden",
   display: "flex",
@@ -595,23 +603,35 @@ const page: React.CSSProperties = {
 const headerBar: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: 16,
+  gap: 10,
   padding: "10px 24px",
-  background: DARK,
-  borderBottom: `1px solid ${DARK_BORDER}`,
+  background: P.void,
+  borderBottom: `1px solid ${P.border}`,
   flexShrink: 0,
 };
 
-const headerIcon: React.CSSProperties = {
-  maxHeight: 48,
-};
+const headerDot = (color: string): React.CSSProperties => ({
+  width: 8,
+  height: 8,
+  borderRadius: "50%",
+  background: color,
+  boxShadow: `0 0 6px ${color}`,
+  flexShrink: 0,
+});
 
 const headerTitle: React.CSSProperties = {
-  fontSize: 24,
-  fontWeight: 700,
-  color: "#fff",
+  fontSize: 16,
+  fontWeight: 600,
+  color: P.text,
   whiteSpace: "nowrap",
-  letterSpacing: "-0.3px",
+  fontFamily: MONO,
+};
+
+const headerState: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 400,
+  color: P.dim,
+  fontFamily: MONO,
 };
 
 // ── Layout ──
@@ -626,7 +646,7 @@ const gamePane: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: DARK_MID,
+  background: P.void,
   padding: 20,
   flexShrink: 0,
 };
@@ -636,8 +656,8 @@ const chatPane: React.CSSProperties = {
   height: "100%",
   display: "flex",
   flexDirection: "column",
-  background: SURFACE,
-  borderLeft: `1px solid ${BORDER}`,
+  background: P.surface,
+  borderLeft: `1px solid ${P.border}`,
 };
 
 const chatScroll: React.CSSProperties = {
@@ -648,7 +668,7 @@ const chatScroll: React.CSSProperties = {
 const container: React.CSSProperties = {
   maxWidth: 720,
   margin: "0 auto",
-  padding: "24px 20px",
+  padding: "16px 16px",
 };
 
 // ── Empty state ──
@@ -658,291 +678,253 @@ const emptyState: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   padding: "80px 20px",
-  gap: 8,
+  gap: 12,
 };
 
-const emptyIcon: React.CSSProperties = {
-  fontSize: 32,
-  color: "#c4c4d0",
-  fontFamily: MONO,
+const emptyDot: React.CSSProperties = {
+  width: 12,
+  height: 12,
+  borderRadius: "50%",
+  background: P.glow,
+  boxShadow: `0 0 12px ${P.glow}`,
+  animation: "pulse 2s ease-in-out infinite",
 };
 
 const emptyTitle: React.CSSProperties = {
-  fontSize: 16,
-  fontWeight: 600,
-  color: "#8888a0",
-  letterSpacing: "-0.2px",
+  fontSize: 14,
+  fontWeight: 500,
+  color: P.dim,
+  fontFamily: MONO,
 };
 
 const emptySubtitle: React.CSSProperties = {
-  fontSize: 13,
-  color: "#aaa",
+  fontSize: 12,
+  color: P.dim,
+  fontFamily: MONO,
+  opacity: 0.6,
 };
 
-// ── Crab switcher ──
+// ── Creature switcher ──
 const switcherBar: React.CSSProperties = {
   display: "flex",
-  gap: 6,
+  gap: 4,
   padding: "8px 16px",
-  borderBottom: `1px solid ${BORDER}`,
-  background: "#fff",
+  borderBottom: `1px solid ${P.border}`,
+  background: P.void,
   overflowX: "auto",
   flexShrink: 0,
 };
 
 const switcherBtnBase: React.CSSProperties = {
   display: "flex",
-  flexDirection: "column",
   alignItems: "center",
-  gap: 2,
-  padding: "6px 16px",
-  borderRadius: 8,
-  border: `1px solid ${BORDER}`,
-  fontSize: 13,
-  fontWeight: 600,
+  gap: 6,
+  padding: "6px 14px",
+  borderRadius: 6,
+  border: `1px solid ${P.border}`,
+  fontSize: 12,
+  fontWeight: 500,
   cursor: "pointer",
   whiteSpace: "nowrap",
-  transition: "all 0.15s",
+  fontFamily: MONO,
   background: "transparent",
+  color: P.dim,
 };
 
 const switcherBtnActive: React.CSSProperties = {
   ...switcherBtnBase,
-  background: DARK_MID,
-  color: "#fff",
-  borderColor: DARK_MID,
+  background: P.surface,
+  color: P.text,
+  borderColor: P.glow + "44",
 };
 
 const switcherBtnInactive: React.CSSProperties = {
   ...switcherBtnBase,
-  background: "#fff",
-  color: "#555",
 };
 
-const switcherState: React.CSSProperties = {
-  fontSize: 10,
-  fontWeight: 500,
-  textTransform: "uppercase",
-  letterSpacing: "0.4px",
+const switcherDot = (color: string): React.CSSProperties => ({
+  width: 6,
+  height: 6,
+  borderRadius: "50%",
+  background: color,
+  boxShadow: `0 0 4px ${color}`,
+  flexShrink: 0,
+});
+
+// ── Chat cards ──
+const cardBase: React.CSSProperties = {
+  padding: "8px 14px",
+  background: P.surface,
+  borderRadius: 4,
+  fontFamily: MONO,
+  fontSize: 12.5,
+  lineHeight: "1.6",
+  color: P.text,
 };
 
-// ── Chat bubbles ──
-const bubbleBase: React.CSSProperties = {
-  padding: "10px 16px",
-  maxWidth: "78%",
-  boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-};
-
-const bubbleLeft: React.CSSProperties = {
-  ...bubbleBase,
-  background: "#fff",
-  borderRadius: "16px 16px 16px 4px",
-  border: `1px solid ${BORDER}`,
-};
-
-const bubbleRight: React.CSSProperties = {
-  ...bubbleBase,
-  background: DARK_MID,
-  color: "#fff",
-  borderRadius: "16px 16px 4px 16px",
-};
-
-const dreamBubbleLeft: React.CSSProperties = {
-  ...bubbleBase,
-  background: "#7c3aed",
-  borderRadius: "16px 16px 16px 4px",
-};
-
-const dreamBubbleRight: React.CSSProperties = {
-  ...bubbleBase,
-  background: "#6d28d9",
-  color: "#fff",
-  borderRadius: "16px 16px 4px 16px",
-};
-
-const planBubbleLeft: React.CSSProperties = {
-  ...bubbleBase,
-  background: "#0d9488",
-  borderRadius: "16px 16px 16px 4px",
-};
-
-const planBubbleRight: React.CSSProperties = {
-  ...bubbleBase,
-  background: "#0f766e",
-  color: "#fff",
-  borderRadius: "16px 16px 4px 16px",
-};
-
-const respondBubble: React.CSSProperties = {
-  ...bubbleBase,
-  background: "#ea580c",
-  color: "#fff",
-  borderRadius: "16px 16px 4px 16px",
-};
-
-const ownerBubble: React.CSSProperties = {
-  ...bubbleBase,
-  background: "#2563eb",
-  color: "#fff",
-  borderRadius: "16px 16px 16px 4px",
+const cardText: React.CSSProperties = {
+  margin: 0,
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  fontFamily: MONO,
+  fontSize: "inherit",
+  lineHeight: "inherit",
+  color: "inherit",
 };
 
 const snapshotImg: React.CSSProperties = {
   width: "100%",
   maxWidth: 200,
-  borderRadius: 8,
+  borderRadius: 4,
   marginBottom: 6,
-  imageRendering: "pixelated",
-};
-
-const bubbleText: React.CSSProperties = {
-  margin: 0,
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-word",
-  fontFamily: MONO,
-  fontSize: 12.5,
-  lineHeight: "1.6",
 };
 
 // ── System blocks ──
 const systemBlock: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 10,
-  padding: "14px 18px",
-  marginBottom: 16,
-  border: `1px solid ${BORDER}`,
+  background: P.void,
+  borderRadius: 4,
+  padding: "10px 14px",
+  marginBottom: 8,
+  border: `1px solid ${P.border}`,
 };
 
 const systemLabel: React.CSSProperties = {
-  fontSize: 10,
-  fontWeight: 700,
-  color: "#aaa",
+  fontSize: 9,
+  fontWeight: 600,
+  color: P.dim,
   textTransform: "uppercase",
-  marginBottom: 8,
+  marginBottom: 6,
   letterSpacing: "0.8px",
+  fontFamily: MONO,
 };
 
 const systemText: React.CSSProperties = {
   margin: 0,
   whiteSpace: "pre-wrap",
   wordBreak: "break-word",
-  fontSize: 12,
-  lineHeight: "1.6",
-  color: "#555",
+  fontSize: 11,
+  lineHeight: "1.5",
+  color: P.dim,
   fontFamily: MONO,
+  opacity: 0.7,
 };
 
 const dreamSystemBlock: React.CSSProperties = {
   ...systemBlock,
-  background: "#faf5ff",
-  borderColor: "#ddd6fe",
+  borderColor: P.dream + "33",
+  background: "#0f0c1a",
 };
 
 const dreamSystemLabel: React.CSSProperties = {
   ...systemLabel,
-  color: "#7c3aed",
+  color: P.dream,
 };
 
 const dreamSystemText: React.CSSProperties = {
   ...systemText,
-  color: "#5b21b6",
+  color: P.dream,
+  opacity: 0.6,
 };
 
 const planSystemBlock: React.CSSProperties = {
   ...systemBlock,
-  background: "#f0fdfa",
-  borderColor: "#a7f3d0",
+  borderColor: P.plan + "33",
+  background: "#0c1410",
 };
 
 const planSystemLabel: React.CSSProperties = {
   ...systemLabel,
-  color: "#0d9488",
+  color: P.plan,
 };
 
 const planSystemText: React.CSSProperties = {
   ...systemText,
-  color: "#115e59",
+  color: P.plan,
+  opacity: 0.6,
 };
 
 // ── Input bar ──
 const inputBar: React.CSSProperties = {
-  borderTop: `1px solid ${BORDER}`,
-  padding: "12px 20px",
-  background: "#fff",
+  borderTop: `1px solid ${P.border}`,
+  padding: "10px 16px",
+  background: P.void,
   display: "flex",
   alignItems: "center",
-  gap: 10,
+  gap: 8,
 };
 
 const inputForm: React.CSSProperties = {
   display: "flex",
   flex: 1,
-  gap: 10,
+  gap: 8,
 };
 
 const inputField: React.CSSProperties = {
   flex: 1,
-  padding: "10px 16px",
-  borderRadius: 10,
-  border: `1px solid ${BORDER}`,
+  padding: "9px 14px",
+  borderRadius: 6,
+  border: `1px solid ${P.border}`,
   fontSize: 13,
   fontFamily: MONO,
   outline: "none",
-  background: SURFACE,
-  color: "#333",
+  background: P.surface,
+  color: P.text,
 };
 
 const sendBtn: React.CSSProperties = {
-  padding: "10px 20px",
-  borderRadius: 10,
+  padding: "9px 18px",
+  borderRadius: 6,
   border: "none",
-  background: DARK_MID,
-  color: "#fff",
-  fontSize: 13,
+  background: P.glow,
+  color: P.void,
+  fontSize: 12,
   fontWeight: 600,
   cursor: "pointer",
-  letterSpacing: "0.2px",
+  fontFamily: MONO,
 };
 
 const countdownStyle: React.CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  color: "#ea580c",
+  fontSize: 12,
+  fontWeight: 600,
+  color: P.respond,
   fontFamily: MONO,
   minWidth: 30,
 };
 
 const focusBtnInactive: React.CSSProperties = {
-  padding: "8px 14px",
-  borderRadius: 10,
-  border: `1px solid ${BORDER}`,
-  background: SURFACE,
-  color: "#999",
-  fontSize: 12,
-  fontWeight: 600,
+  padding: "7px 12px",
+  borderRadius: 6,
+  border: `1px solid ${P.border}`,
+  background: "transparent",
+  color: P.dim,
+  fontSize: 11,
+  fontWeight: 500,
   cursor: "pointer",
   whiteSpace: "nowrap",
+  fontFamily: MONO,
 };
 
 const focusBtnActive: React.CSSProperties = {
-  padding: "8px 14px",
-  borderRadius: 10,
-  border: "1px solid #ea580c",
-  background: "#ea580c",
+  padding: "7px 12px",
+  borderRadius: 6,
+  border: `1px solid ${P.respond}`,
+  background: P.respond,
   color: "#fff",
-  fontSize: 12,
-  fontWeight: 600,
+  fontSize: 11,
+  fontWeight: 500,
   cursor: "pointer",
   whiteSpace: "nowrap",
+  fontFamily: MONO,
 };
 
 const newMsgPill: React.CSSProperties = {
   textAlign: "center",
-  padding: "8px 0",
-  background: DARK_MID,
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 600,
+  padding: "6px 0",
+  background: `${P.void}dd`,
+  color: P.glow,
+  fontSize: 11,
+  fontWeight: 500,
   cursor: "pointer",
-  letterSpacing: "0.4px",
+  fontFamily: MONO,
+  borderTop: `1px solid ${P.border}`,
 };
