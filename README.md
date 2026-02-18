@@ -37,7 +37,7 @@ The Fold itself lives in the `fold/` submodule.
 
 ## Configuration
 
-`config.yaml` for global settings. Per-creature overrides under `crabs:`. Environment variables: `OPENAI_API_KEY`, `MYXO_MODEL`, `MYXO_PORT`.
+`config.yaml` for global settings. Per-creature overrides under `creatures:`. Environment variables: `OPENAI_API_KEY`, `MYXO_MODEL`, `MYXO_PORT`.
 
 ## License
 

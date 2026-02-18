@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import uvicorn
 from myxo.brain import Brain
-from myxo.config import config, get_crab_config
+from myxo.config import config, get_creature_config
 from myxo.identity import load_identity_from, create_identity
 from myxo.provider import create_provider
 from myxo.server import create_app
@@ -26,15 +26,15 @@ logging.basicConfig(
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 
 
-def _crab_id_from_box(box_path: str) -> str:
-    """Derive crab ID from box directory name: coral_box -> coral."""
+def _creature_id_from_box(box_path: str) -> str:
+    """Derive creature ID from box directory name: coral_box -> coral."""
     dirname = os.path.basename(box_path)
     if dirname.endswith("_box"):
         return dirname[:-4]
     return dirname
 
 
-def _discover_crabs() -> dict[str, Brain]:
+def _discover_creatures() -> dict[str, Brain]:
     """Discover all *_box/ dirs, migrate legacy environment/, return brains dict."""
     brains: dict[str, Brain] = {}
 
@@ -44,7 +44,7 @@ def _discover_crabs() -> dict[str, Brain]:
     if os.path.isfile(legacy_identity):
         with open(legacy_identity, "r") as f:
             identity = json.load(f)
-        name = identity.get("name", "crab").lower()
+        name = identity.get("name", "creature").lower()
         new_path = os.path.join(PROJECT_ROOT, f"{name}_box")
         print(f"\n  Migrating environment/ -> {name}_box/...")
         shutil.move(legacy, new_path)
@@ -57,11 +57,11 @@ def _discover_crabs() -> dict[str, Brain]:
         identity = load_identity_from(box_path)
         if not identity:
             continue
-        crab_id = _crab_id_from_box(box_path)
-        crab_cfg = get_crab_config(crab_id)
-        provider = create_provider(crab_cfg)
-        brain = Brain(identity, box_path, provider, crab_config=crab_cfg)
-        brains[crab_id] = brain
+        creature_id = _creature_id_from_box(box_path)
+        creature_cfg = get_creature_config(creature_id)
+        provider = create_provider(creature_cfg)
+        brain = Brain(identity, box_path, provider, creature_config=creature_cfg)
+        brains[creature_id] = brain
 
     return brains
 
@@ -86,30 +86,30 @@ if __name__ == "__main__":
     # Ensure Fold-side env for RLM provider
     _ensure_fold_env()
 
-    # Discover existing crabs
-    brains = _discover_crabs()
+    # Discover existing creatures
+    brains = _discover_creatures()
 
     if brains:
         names = [b.identity["name"] for b in brains.values()]
-        print(f"\n  Found {len(brains)} crab(s): {', '.join(names)}")
+        print(f"\n  Found {len(brains)} creature(s): {', '.join(names)}")
         answer = input("  Create a new one? (y/N) > ").strip().lower()
         if answer == "y":
             identity = create_identity()
-            crab_id = identity["name"].lower()
-            box_path = os.path.join(PROJECT_ROOT, f"{crab_id}_box")
-            crab_cfg = get_crab_config(crab_id)
-            provider = create_provider(crab_cfg)
-            brain = Brain(identity, box_path, provider, crab_config=crab_cfg)
-            brains[crab_id] = brain
+            creature_id = identity["name"].lower()
+            box_path = os.path.join(PROJECT_ROOT, f"{creature_id}_box")
+            creature_cfg = get_creature_config(creature_id)
+            provider = create_provider(creature_cfg)
+            brain = Brain(identity, box_path, provider, creature_config=creature_cfg)
+            brains[creature_id] = brain
     else:
-        print("\n  No crabs found. Let's create one!")
+        print("\n  No creatures found. Let's create one!")
         identity = create_identity()
-        crab_id = identity["name"].lower()
-        box_path = os.path.join(PROJECT_ROOT, f"{crab_id}_box")
-        crab_cfg = get_crab_config(crab_id)
-        provider = create_provider(crab_cfg)
-        brain = Brain(identity, box_path, provider, crab_config=crab_cfg)
-        brains[crab_id] = brain
+        creature_id = identity["name"].lower()
+        box_path = os.path.join(PROJECT_ROOT, f"{creature_id}_box")
+        creature_cfg = get_creature_config(creature_id)
+        provider = create_provider(creature_cfg)
+        brain = Brain(identity, box_path, provider, creature_config=creature_cfg)
+        brains[creature_id] = brain
 
     # Initialize the summarizer (local small model for compressing heavy Fold output)
     summarizer_url = config.get("summarizer_base_url")
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("MYXO_PORT", config.get("port", 8080)))
 
     names = [b.identity["name"] for b in brains.values()]
-    print(f"\n  Starting {len(brains)} crab(s): {', '.join(names)}")
+    print(f"\n  Starting {len(brains)} creature(s): {', '.join(names)}")
     print(f"  Open http://localhost:{port} to watch them think\n")
     uvicorn.run(
         app,

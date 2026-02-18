@@ -10,7 +10,7 @@ interface ApiCall {
   is_planning?: boolean;
 }
 
-interface CrabInfo {
+interface CreatureInfo {
   id: string;
   name: string;
   state: string;
@@ -156,7 +156,7 @@ function renderOutputItem(item: Record<string, unknown>, phase: Phase): Msg | nu
 export default function App() {
   const [calls, setCalls] = useState<ApiCall[]>([]);
   const [position, setPosition] = useState({ x: 5, y: 5 });
-  const [crabState, setCrabState] = useState("idle");
+  const [creatureState, setCreatureState] = useState("idle");
   const [alert, setAlert] = useState(false);
   const [activity, setActivity] = useState({ type: "idle", detail: "" });
   const [chatInput, setChatInput] = useState("");
@@ -164,23 +164,23 @@ export default function App() {
   const [countdown, setCountdown] = useState(0);
   const [hasNew, setHasNew] = useState(false);
   const [pendingVoice, setPendingVoice] = useState<string | null>(null);
-  const [crabName, setCrabName] = useState("myxo");
+  const [creatureName, setCreatureName] = useState("myxo");
   const [focusMode, setFocusMode] = useState(false);
   const [bbsIssues, setBbsIssues] = useState<BbsIssue[]>([]);
   const [bbsOpen, setBbsOpen] = useState(false);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [journalOpen, setJournalOpen] = useState(false);
-  const [crabs, setCrabs] = useState<CrabInfo[]>([]);
-  const [activeCrab, setActiveCrab] = useState("");
+  const [creatures, setCreatures] = useState<CreatureInfo[]>([]);
+  const [activeCreature, setActiveCreature] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<GameWorldHandle>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const crabParam = activeCrab ? `?crab=${activeCrab}` : "";
+  const creatureParam = activeCreature ? `?creature=${activeCreature}` : "";
 
-  const connectWs = useCallback((crabId: string) => {
+  const connectWs = useCallback((creatureId: string) => {
     // Close existing connection
     if (wsRef.current) {
       wsRef.current.onmessage = null;
@@ -191,7 +191,7 @@ export default function App() {
     }
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${location.host}/ws/${crabId}`);
+    const ws = new WebSocket(`${protocol}//${location.host}/ws/${creatureId}`);
     wsRef.current = ws;
 
     ws.onmessage = (ev) => {
@@ -202,7 +202,7 @@ export default function App() {
       }
       if (msg.event === "position") setPosition(msg.data);
       if (msg.event === "status") {
-        setCrabState(msg.data.state);
+        setCreatureState(msg.data.state);
         if (msg.data.state === "thinking") setAlert(false);
       }
       if (msg.event === "alert") setAlert(true);
@@ -226,21 +226,21 @@ export default function App() {
     };
 
     ws.onerror = () => {
-      console.warn(`WebSocket error for crab ${crabId}`);
+      console.warn(`WebSocket error for creature ${creatureId}`);
     };
 
     ws.onclose = () => {
       // Reconnect after a brief delay if this is still the active WS
       if (wsRef.current === ws) {
         setTimeout(() => {
-          if (wsRef.current === ws) connectWs(crabId);
+          if (wsRef.current === ws) connectWs(creatureId);
         }, 3000);
       }
     };
   }, []);
 
-  const loadCrabState = useCallback(async (crabId: string) => {
-    const q = `?crab=${crabId}`;
+  const loadCreatureState = useCallback(async (creatureId: string) => {
+    const q = `?creature=${creatureId}`;
     // Fetch historical calls first (before WS connects) to avoid race
     try {
       const [rawRes, statusRes, idRes, bbsRes, journalRes] = await Promise.all([
@@ -258,8 +258,8 @@ export default function App() {
       setCalls(rawData);
       if (statusData.position) setPosition(statusData.position);
       if (statusData.focus_mode !== undefined) setFocusMode(statusData.focus_mode);
-      setCrabState(statusData.state || "idle");
-      if (idData.name) setCrabName(idData.name);
+      setCreatureState(statusData.state || "idle");
+      if (idData.name) setCreatureName(idData.name);
       setBbsIssues(bbsData);
       // Parse journal content into entries
       if (journalData.content) {
@@ -282,21 +282,21 @@ export default function App() {
     }
   }, []);
 
-  // Initial mount: fetch crabs list, load state, then connect WS
+  // Initial mount: fetch creatures list, load state, then connect WS
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/crabs");
-        const list: CrabInfo[] = await res.json();
+        const res = await fetch("/api/creatures");
+        const list: CreatureInfo[] = await res.json();
         if (cancelled) return;
-        setCrabs(list);
+        setCreatures(list);
         if (list.length > 0) {
           const first = list[0].id;
-          setActiveCrab(first);
-          setCrabName(list[0].name);
+          setActiveCreature(first);
+          setCreatureName(list[0].name);
           // Load historical data first, then connect WS for live events
-          await loadCrabState(first);
+          await loadCreatureState(first);
           if (!cancelled) connectWs(first);
         }
       } catch { /* server not ready yet */ }
@@ -309,12 +309,12 @@ export default function App() {
         wsRef.current.close();
       }
     };
-  }, [connectWs, loadCrabState]);
+  }, [connectWs, loadCreatureState]);
 
-  // Switch crab
-  const switchCrab = useCallback((crabId: string) => {
-    if (crabId === activeCrab) return;
-    setActiveCrab(crabId);
+  // Switch creature
+  const switchCreature = useCallback((creatureId: string) => {
+    if (creatureId === activeCreature) return;
+    setActiveCreature(creatureId);
 
     // Reset state
     setConversing(false);
@@ -327,20 +327,20 @@ export default function App() {
     setJournalEntries([]);
     setJournalOpen(false);
 
-    // Update crab name immediately
-    const crab = crabs.find((c) => c.id === crabId);
-    if (crab) setCrabName(crab.name);
+    // Update creature name immediately
+    const creature = creatures.find((c) => c.id === creatureId);
+    if (creature) setCreatureName(creature.name);
 
     // Load historical data first, then connect WS for live events
-    loadCrabState(crabId).then(() => connectWs(crabId));
-  }, [activeCrab, crabs, loadCrabState, connectWs]);
+    loadCreatureState(creatureId).then(() => connectWs(creatureId));
+  }, [activeCreature, creatures, loadCreatureState, connectWs]);
 
-  // Poll crabs list periodically to keep states fresh
+  // Poll creatures list periodically to keep states fresh
   useEffect(() => {
     const interval = setInterval(() => {
-      fetch("/api/crabs")
+      fetch("/api/creatures")
         .then((r) => r.json())
-        .then(setCrabs)
+        .then(setCreatures)
         .catch(() => {});
     }, 5000);
     return () => clearInterval(interval);
@@ -365,17 +365,17 @@ export default function App() {
 
   // Send canvas snapshot to backend when thinking starts
   useEffect(() => {
-    if (crabState === "thinking" && gameRef.current) {
+    if (creatureState === "thinking" && gameRef.current) {
       const dataUrl = gameRef.current.snapshot();
       if (dataUrl) {
-        fetch(`/api/snapshot${crabParam}`, {
+        fetch(`/api/snapshot${creatureParam}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image: dataUrl }),
         }).catch(() => {});
       }
     }
-  }, [crabState, crabParam]);
+  }, [creatureState, creatureParam]);
 
   // Auto-scroll: track whether user is "pinned" to bottom
   const pinnedRef = useRef(true);
@@ -417,7 +417,7 @@ export default function App() {
     const text = chatInput.trim();
     if (!text) return;
     setPendingVoice(text);
-    fetch(`/api/message${crabParam}`, {
+    fetch(`/api/message${creatureParam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
@@ -431,7 +431,7 @@ export default function App() {
   const toggleFocusMode = () => {
     const next = !focusMode;
     setFocusMode(next);
-    fetch(`/api/focus-mode${crabParam}`, {
+    fetch(`/api/focus-mode${creatureParam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: next }),
@@ -529,9 +529,9 @@ export default function App() {
   return (
     <div style={page}>
       <div style={headerBar}>
-        <div style={headerDot(stateColor(crabState))} />
-        <span style={headerTitle}>{crabName}</span>
-        <span style={headerState}>{crabState}</span>
+        <div style={headerDot(stateColor(creatureState))} />
+        <span style={headerTitle}>{creatureName}</span>
+        <span style={headerState}>{creatureState}</span>
         <div style={{ flex: 1 }} />
         {journalCount > 0 && (
           <button
@@ -555,21 +555,21 @@ export default function App() {
       <div style={twoPane}>
         {/* Left pane — Game world */}
         <div style={gamePane}>
-          <GameWorld ref={gameRef} position={position} state={crabState} alert={alert} activity={activity} conversing={conversing} />
+          <GameWorld ref={gameRef} position={position} state={creatureState} alert={alert} activity={activity} conversing={conversing} />
         </div>
 
         {/* Right pane — Chat feed */}
         <div style={chatPane}>
           {/* Creature switcher */}
-          {crabs.length > 1 && (
+          {creatures.length > 1 && (
             <div style={switcherBar}>
-              {crabs.map((c) => {
-                const isActive = c.id === activeCrab;
+              {creatures.map((c) => {
+                const isActive = c.id === activeCreature;
                 return (
                   <button
                     key={c.id}
                     style={isActive ? switcherBtnActive : switcherBtnInactive}
-                    onClick={() => switchCrab(c.id)}
+                    onClick={() => switchCreature(c.id)}
                   >
                     <span style={switcherDot(stateColor(c.state))} />
                     <span>{c.name}</span>
@@ -635,7 +635,7 @@ export default function App() {
               <div style={emptyState}>
                 <div style={emptyDot} />
                 <div style={emptyTitle}>Waiting for thoughts...</div>
-                <div style={emptySubtitle}>{crabName} is waking up</div>
+                <div style={emptySubtitle}>{creatureName} is waking up</div>
               </div>
             )}
             {messages.map((msg, i) => {
@@ -712,7 +712,7 @@ export default function App() {
               <input
                 style={inputField}
                 type="text"
-                placeholder={conversing ? `Reply to ${crabName}...` : `Say something to ${crabName}...`}
+                placeholder={conversing ? `Reply to ${creatureName}...` : `Say something to ${creatureName}...`}
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
               />
@@ -762,8 +762,8 @@ const headerBar: React.CSSProperties = {
   alignItems: "center",
   gap: 10,
   padding: "10px 24px",
-  background: P.void,
-  borderBottom: `1px solid ${P.border}`,
+  background: `linear-gradient(180deg, #0c1628 0%, ${P.void} 100%)`,
+  borderBottom: `2px solid #1a4a7a`,
   flexShrink: 0,
 };
 

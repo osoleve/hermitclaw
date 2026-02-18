@@ -1,6 +1,6 @@
 # Myxo Configuration
 
-# --- Global defaults (apply to all crabs unless overridden) ---
+# --- Global defaults (apply to all creatures unless overridden) ---
 model: "moonshotai/kimi-k2.5"
 provider: "local"
 base_url: "https://openrouter.ai/api/v1"
@@ -20,7 +20,7 @@ recency_decay_rate: 0.995      # exponential decay rate for recency scoring
 summarizer_base_url: "http://localhost:5123/v1"
 summarizer_model: "meta-llama/Llama-3.2-3B-Instruct"
 
-# --- Per-crab overrides ---
-# Any key here overrides the global default for that crab.
-# Crab ID is the lowercased name (e.g. "coral" for coral_box/).
-crabs: {}
+# --- Per-creature overrides ---
+# Any key here overrides the global default for that creature.
+# Creature ID is the lowercased name (e.g. "coral" for coral_box/).
+creatures: {}

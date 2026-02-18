@@ -1,15 +1,14 @@
 /**
- * World configuration — pixel-art room with slime creature.
+ * World configuration — MMBN-inspired pixel-art room with slime creature.
  */
 
-// Room grid dimensions (matches room.png)
+// Room grid dimensions
 export const COLS = 12;
 export const ROWS = 12;
 export const TILE = 32; // pixels per tile
 
-// Pixel slime rendering
-export const SPRITE_SIZE = 16;  // native pixel art resolution
-export const DISPLAY_SIZE = 48; // rendered size on canvas (3x scale)
+// Sprite sheet frame size
+export const SPRITE_FRAME = 48; // native frame size in sprite sheet
 
 // Named locations (tile coordinates within 12x12 room)
 export const LOCATIONS: Record<string, { x: number; y: number; label: string }> = {
@@ -39,9 +38,14 @@ export const PALETTE = {
   dim:         "#5a6a7a",
 } as const;
 
-// Slime body colors by state
-export const SLIME_COLORS: Record<string, { body: string; light: string; dark: string }> = {
-  default:    { body: "#00e5a0", light: "#66ffd0", dark: "#009968" },
-  reflecting: { body: "#a78bfa", light: "#c4b5fd", dark: "#7c5cc5" },
-  planning:   { body: "#34d399", light: "#6ee7b7", dark: "#059669" },
+// Asset paths — served from public/assets/
+export const ASSETS = {
+  tileset: "/assets/tiles/room-tileset.png",
+  slimeSheet: "/assets/sprites/slime-sheet.png",
+} as const;
+
+// Slime state tint colors (applied over base sprite)
+export const SLIME_TINTS: Record<string, { color: string; amount: number }> = {
+  reflecting: { color: "#a78bfa", amount: 0.35 },
+  planning:   { color: "#34d399", amount: 0.3 },
 };
