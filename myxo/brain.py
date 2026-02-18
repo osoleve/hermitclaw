@@ -139,7 +139,7 @@ class Brain:
     JOURNAL_INTERVAL = 5
 
     # Tool loop circuit breaker — max tool calls per think cycle
-    MAX_TOOL_CALLS = 12
+    MAX_TOOL_CALLS = 20
 
     def __init__(self, identity: dict, env_path: str, provider=None, creature_config: dict = None):
         self.identity = identity
