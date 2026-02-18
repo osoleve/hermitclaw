@@ -15,6 +15,7 @@ from myxo.config import config, get_crab_config
 from myxo.identity import load_identity_from, create_identity
 from myxo.provider import create_provider
 from myxo.server import create_app
+from myxo import summarizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,7 +66,26 @@ def _discover_crabs() -> dict[str, Brain]:
     return brains
 
 
+def _ensure_fold_env():
+    """Auto-create ~/fold/.env.agents if OPENAI_API_KEY is set."""
+    env_agents = os.path.expanduser("~/fold/.env.agents")
+    if os.path.exists(env_agents):
+        return
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return
+    try:
+        with open(env_agents, "w") as f:
+            f.write(f"OPENAI_API_KEY={api_key}\n")
+        print(f"  Created {env_agents} for Fold RLM provider")
+    except Exception as e:
+        print(f"  Warning: could not create {env_agents}: {e}")
+
+
 if __name__ == "__main__":
+    # Ensure Fold-side env for RLM provider
+    _ensure_fold_env()
+
     # Discover existing crabs
     brains = _discover_crabs()
 
@@ -90,6 +110,14 @@ if __name__ == "__main__":
         provider = create_provider(crab_cfg)
         brain = Brain(identity, box_path, provider, crab_config=crab_cfg)
         brains[crab_id] = brain
+
+    # Initialize the summarizer (local small model for compressing heavy Fold output)
+    summarizer_url = config.get("summarizer_base_url")
+    summarizer_model = config.get("summarizer_model")
+    if summarizer_url and summarizer_model:
+        summarizer.init(summarizer_url, summarizer_model)
+    else:
+        print("  (No summarizer configured — heavy Fold results will be truncated only)")
 
     # Initialize the app with all brains
     app = create_app(brains)

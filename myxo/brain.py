@@ -10,8 +10,11 @@ from datetime import datetime, date
 
 from myxo.config import config
 from myxo.memory import MemoryStream
-from myxo.prompts import main_system_prompt, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE
-from myxo.fold_client import evaluate as fold_evaluate
+from myxo.prompts import main_system_prompt, pick_mood, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE, JOURNAL_PROMPT
+from myxo.fold_client import evaluate as fold_evaluate, evaluate_long as fold_evaluate_long, check_session_fresh
+from myxo.summarizer import summarize_result as _summarize_fold
+
+ARTIFACTS_FILENAME = "fold_artifacts.jsonl"
 
 logger = logging.getLogger("myxo.brain")
 
@@ -124,12 +127,16 @@ class Brain:
     _PDF_EXTS = {".pdf"}
     _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
     # Internal files the crab/system manages — never trigger alerts
-    _IGNORE_FILES = {"memory_stream.jsonl", "identity.json", "outbox.jsonl", "outbox_read.json"}
+    _IGNORE_FILES = {"memory_stream.jsonl", "identity.json", "outbox.jsonl",
+                      "outbox_read.json", "fold_artifacts.jsonl", "memory_state.json"}
     # Internal files that live in the root but shouldn't trigger inbox alerts
     _INTERNAL_ROOT_FILES = {"projects.md"}
 
     # Planning frequency — plan every N think cycles
     PLAN_INTERVAL = 10
+
+    # Journal frequency — synthesize every N think cycles (offset from planning)
+    JOURNAL_INTERVAL = 5
 
     # Tool loop circuit breaker — max tool calls per think cycle
     MAX_TOOL_CALLS = 12
@@ -155,8 +162,8 @@ class Brain:
         self._seen_env_files: set[str] = set()
         self._inbox_pending: list[dict] = []
 
-        # Outbox counter — loaded from existing file in run()
-        self._outbox_count: int = 0
+        # BBS issues created this run — exposed via /api/bbs
+        self._bbs_issues: list[dict] = []
 
         # Planning state
         self._cycles_since_plan: int = 0
@@ -171,7 +178,75 @@ class Brain:
         self._conversation_reply: str | None = None
         self._waiting_for_reply: bool = False
 
+        # Fold session tracking
+        self._fold_session_warned: bool = False  # only warn once per run about reset
+
+        # Mood persistence — pick once, stick for several cycles
+        self._current_mood: dict | None = None
+        self._mood_cycles: int = 0
+        self._mood_duration: int = 5  # re-pick after this many think cycles
+
+        # Cross-cycle error tracking — prevents fixation loops
+        self._persistent_errors: dict[str, int] = {}  # error_key -> count across cycles
+
+        # Journal state — auto-captured cycle metadata + periodic synthesis
+        self._journal_tags: list[dict] = []
+        self._cycles_since_journal: int = 0
+
     # --- Helpers ---
+
+    @staticmethod
+    def _strip_images_for_log(entry: dict) -> dict:
+        """Remove base64 image data from a log entry to keep JSONL manageable."""
+        import copy
+        e = copy.deepcopy(entry)
+        for item in e.get("input", []):
+            if isinstance(item, dict) and isinstance(item.get("content"), list):
+                for part in item["content"]:
+                    if isinstance(part, dict) and part.get("type") == "input_image":
+                        part["image_url"] = "(image stripped from log)"
+        return e
+
+    def _record_fold_artifact(self, expression: str, result: str):
+        """Append a successful Fold computation to the artifact log."""
+        # Only record non-trivial results (skip short probes like (+ 1 1))
+        if len(result) < 20 and not expression.strip().startswith("(define"):
+            return
+        # Skip module listings and environment dumps (useful but not "artifacts")
+        if expression.strip() in ("(modules)", "(+ 1 1)"):
+            return
+
+        artifact = {
+            "timestamp": datetime.now().isoformat(),
+            "expression": expression[:500],
+            "result_preview": result[:200],
+            "result_length": len(result),
+        }
+        artifacts_path = os.path.join(self.env_path, ARTIFACTS_FILENAME)
+        try:
+            with open(artifacts_path, "a") as f:
+                f.write(json.dumps(artifact) + "\n")
+        except Exception as e:
+            logger.error(f"Failed to record artifact: {e}")
+
+    def _load_recent_artifacts(self, n: int = 10) -> list[dict]:
+        """Load the last N Fold artifacts for context."""
+        artifacts_path = os.path.join(self.env_path, ARTIFACTS_FILENAME)
+        if not os.path.isfile(artifacts_path):
+            return []
+        entries = []
+        try:
+            with open(artifacts_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            entries.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+        except Exception:
+            pass
+        return entries[-n:]
 
     def _read_file(self, rel_path: str) -> str | None:
         """Read a file from environment/, return contents or None."""
@@ -256,12 +331,17 @@ class Brain:
             "is_planning": is_planning,
         }
         self.api_calls.append(entry)
+        # Cap in-memory API snapshots to prevent superlinear memory growth
+        if len(self.api_calls) > 50:
+            self.api_calls = self.api_calls[-50:]
         await self._broadcast({"event": "api_call", "data": entry})
 
         # Append to log file (project root, outside environment)
+        # Strip base64 images to keep the log manageable
         try:
+            log_entry = self._strip_images_for_log(entry)
             with open(LOG_PATH, "a") as f:
-                f.write(json.dumps(entry) + "\n")
+                f.write(json.dumps(log_entry) + "\n")
         except Exception:
             pass
 
@@ -321,27 +401,175 @@ class Brain:
 
         return reply
 
-    async def _handle_outbox(self, args: dict) -> str:
-        """Handle the outbox tool — fire-and-forget message to owner."""
-        msg = args.get("message", "")
-        self._outbox_count += 1
-        msg_id = f"out_{self._outbox_count:04d}"
-        timestamp = datetime.now().isoformat()
+    @staticmethod
+    def _scheme_escape(s: str) -> str:
+        """Escape a string for embedding in a Scheme string literal."""
+        return s.replace("\\", "\\\\").replace('"', '\\"')
 
-        entry = {"id": msg_id, "timestamp": timestamp, "message": msg, "read": False}
-        outbox_path = os.path.join(self.env_path, "outbox.jsonl")
-        try:
-            with open(outbox_path, "a") as f:
-                f.write(json.dumps(entry) + "\n")
-        except Exception as e:
-            logger.error(f"Failed to write outbox: {e}")
+    async def _handle_bbs(self, args: dict) -> str:
+        """Handle the bbs tool — file an issue on the Fold BBS."""
+        title = args.get("title", "")
+        description = args.get("description", "")
+        issue_type = args.get("type", "note")
+        priority = args.get("priority", 3)
+        labels = args.get("labels", [])
+        name = self.identity["name"]
+
+        esc = self._scheme_escape
+        labels_sexp = " ".join(labels) if labels else ""
+        expr = (
+            f'(bbs-create "{esc(title)}" '
+            f"'type '{issue_type} "
+            f"'priority {priority} "
+            f"'labels '({labels_sexp}) "
+            f"'created-by \"{esc(name)}\" "
+            f"'description \"{esc(description)}\")"
+        )
+
+        session = f"myxo-{name.lower()}"
+        result = await asyncio.to_thread(fold_evaluate, expr, session)
+
+        # Parse issue ID from result (e.g. "Created fold-abc1")
+        issue_id = None
+        for word in result.split():
+            if word.startswith("fold-"):
+                issue_id = word.strip(".").strip(")")
+                break
+
+        timestamp = datetime.now().isoformat()
+        issue_data = {
+            "id": issue_id or f"pending-{len(self._bbs_issues) + 1}",
+            "title": title,
+            "description": description,
+            "type": issue_type,
+            "priority": priority,
+            "labels": labels,
+            "timestamp": timestamp,
+            "fold_result": result,
+        }
+        self._bbs_issues.append(issue_data)
 
         await self._broadcast({
-            "event": "outbox",
-            "data": {"id": msg_id, "timestamp": timestamp, "message": msg},
+            "event": "bbs",
+            "data": issue_data,
         })
 
-        return f"Message left in outbox ({msg_id})."
+        return result
+
+    async def _handle_rlm(self, args: dict) -> str:
+        """Handle the rlm tool — launch a deep exploration sub-agent in the Fold."""
+        task = args.get("task", "")
+        seed_input = args.get("input", "")
+        name = self.identity["name"]
+
+        await self._broadcast({
+            "event": "activity",
+            "data": {"type": "deep_exploration", "detail": f"RLM: {task[:60]}"},
+        })
+
+        # Build the provider config for the Fold-side RLM
+        api_key = self.crab_config.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
+        model = self.crab_config.get("rlm_model") or self.crab_config.get("model", "moonshotai/kimi-k2.5")
+        base_url = self.crab_config.get("base_url", "https://openrouter.ai/api/v1")
+
+        esc = self._scheme_escape
+        input_clause = f' "input" "{esc(seed_input)}"' if seed_input else ""
+
+        expr = (
+            '(begin '
+            '(load "boundary/pipeline/rlm2-drive.ss") '
+            f'(let ([provider (make-rlm-provider '
+            f'  "base-url" "{esc(base_url)}" '
+            f'  "api-key" "{esc(api_key)}" '
+            f'  "model" "{esc(model)}")]) '
+            f'  (rlm2-run provider "{esc(task)}"{input_clause})))'
+        )
+
+        session = f"myxo-{name.lower()}-rlm"
+        logger.info(f"RLM run starting: {task[:80]}")
+
+        result = await asyncio.to_thread(fold_evaluate_long, expr, session)
+
+        # Record as artifact on success
+        if not result.startswith("Error:"):
+            self._record_fold_artifact(f"(rlm: {task[:200]})", result)
+
+        logger.info(f"RLM run complete: {len(result)} chars")
+        return result
+
+    async def _synthesize_journal(self):
+        """Synthesize recent cycle metadata into an expressive journal entry."""
+        if not self._journal_tags:
+            self._cycles_since_journal = 0
+            return
+
+        # Gather context: recent tags + recent artifacts
+        tags = self._journal_tags[-10:]
+        artifacts = self._load_recent_artifacts(5)
+
+        context_parts = ["Recent cycle metadata:"]
+        for tag in tags:
+            context_parts.append(
+                f"  cycle {tag['cycle']}: mood={tag['mood']}, "
+                f"tools={tag['tool_count']}, active={tag['was_active']}, "
+                f"thought: {tag['thought_preview']}"
+            )
+        if artifacts:
+            context_parts.append("\nRecent computations:")
+            for a in artifacts:
+                context_parts.append(f"  {a['expression'][:80]} → {a['result_preview'][:60]}")
+
+        journal_input = [{"role": "user", "content": "\n".join(context_parts)}]
+
+        try:
+            journal_response = await asyncio.to_thread(
+                self.provider.chat, journal_input, False, JOURNAL_PROMPT, 600
+            )
+            journal_text = journal_response["text"] or ""
+        except Exception as e:
+            logger.error(f"Journal synthesis failed: {e}")
+            self._journal_tags = []
+            self._cycles_since_journal = 0
+            return
+
+        if not journal_text.strip():
+            self._journal_tags = []
+            self._cycles_since_journal = 0
+            return
+
+        # Write to journal file
+        journal_dir = os.path.join(self.env_path, "journal")
+        os.makedirs(journal_dir, exist_ok=True)
+        journal_path = os.path.join(journal_dir, f"{date.today().isoformat()}.md")
+        now_str = datetime.now().strftime("%I:%M %p")
+        try:
+            with open(journal_path, "a") as f:
+                f.write(f"\n## {now_str}\n{journal_text}\n")
+        except Exception as e:
+            logger.error(f"Failed to write journal: {e}")
+
+        # Store in memory stream
+        try:
+            await asyncio.to_thread(
+                self.stream.add, journal_text, "journal"
+            )
+        except Exception as e:
+            logger.error(f"Journal memory add failed: {e}")
+
+        # Broadcast to frontend
+        await self._broadcast({
+            "event": "journal",
+            "data": {"text": journal_text, "timestamp": datetime.now().isoformat()},
+        })
+
+        # Refresh seen files so journal doesn't trigger inbox alerts
+        self._seen_env_files = self._scan_env_files()
+
+        # Reset
+        self._journal_tags = []
+        self._cycles_since_journal = 0
+
+        logger.info(f"Journal entry written ({len(journal_text)} chars)")
 
     def receive_user_message(self, text: str):
         """Queue a message from the user to be injected in the next think cycle."""
@@ -430,13 +658,73 @@ class Brain:
             return {"type": "moving", "detail": f"Going to {loc}"}
         if tool_name == "respond":
             return {"type": "conversing", "detail": "Talking to someone..."}
-        if tool_name == "outbox":
-            return {"type": "messaging", "detail": "Leaving a note..."}
+        if tool_name == "bbs":
+            return {"type": "filing", "detail": "Filing an issue..."}
+        if tool_name == "rlm":
+            task = tool_args.get("task", "")
+            detail = task[:60] + ("..." if len(task) > 60 else "")
+            return {"type": "deep_exploration", "detail": f"Deep dive: {detail}"}
         if tool_name == "fold":
             expr = tool_args.get("expression", "")
             detail = expr[:60] + ("..." if len(expr) > 60 else "")
             return {"type": "computing", "detail": f"Fold: {detail}"}
         return {"type": "working", "detail": tool_name}
+
+    @staticmethod
+    def _compact_tool_context(input_list: list) -> list:
+        """Collapse older tool exchanges in input_list, keeping the last 3 turns.
+
+        A "turn" here is an assistant message + its tool results. We keep the
+        initial context (user nudge + first few items) and the most recent 3
+        assistant+tool exchanges, replacing the middle with a brief summary.
+        """
+        # Find indices of assistant messages (turn boundaries)
+        assistant_indices = []
+        for i, item in enumerate(input_list):
+            is_assistant = False
+            if isinstance(item, dict):
+                if item.get("role") == "assistant":
+                    is_assistant = True
+            elif hasattr(item, "role") and getattr(item, "role", "") == "assistant":
+                is_assistant = True
+            elif isinstance(item, dict) and item.get("_local_type") == "assistant_with_tools":
+                is_assistant = True
+            if is_assistant:
+                assistant_indices.append(i)
+
+        # Not enough turns to compact
+        if len(assistant_indices) <= 3:
+            return input_list
+
+        # Keep everything before the 3rd-to-last assistant turn as "prefix"
+        # Keep the last 3 turns as "suffix"
+        cut_point = assistant_indices[-3]
+
+        prefix = input_list[:assistant_indices[0]]  # initial context (user nudge etc.)
+        middle = input_list[assistant_indices[0]:cut_point]
+        suffix = input_list[cut_point:]
+
+        # Summarize the middle section
+        middle_summary_parts = []
+        for item in middle:
+            if isinstance(item, dict):
+                role = item.get("role", "")
+                content = item.get("content", "")
+                if role == "tool" and isinstance(content, str) and content:
+                    middle_summary_parts.append(f"  result: {content[:60]}")
+                elif role == "assistant" and isinstance(content, str) and content:
+                    middle_summary_parts.append(f"  thought: {content[:80]}")
+
+        if middle_summary_parts:
+            summary_text = (
+                f"[Earlier in this cycle: {len(middle)} context items compacted]\n"
+                + "\n".join(middle_summary_parts[:8])
+            )
+            compacted = prefix + [{"role": "user", "content": summary_text}] + suffix
+        else:
+            compacted = prefix + suffix
+
+        return compacted
 
     @staticmethod
     def _summarize_tool_loop(loop_log: list, seen_errors: dict) -> str:
@@ -470,8 +758,18 @@ class Brain:
 
     # --- Input building ---
 
+    def _ensure_mood(self):
+        """Pick a mood if we don't have one or it's time to rotate."""
+        if self._current_mood is None or self._mood_cycles >= self._mood_duration:
+            temperament = self.identity.get("traits", {}).get("temperament", "")
+            self._current_mood = pick_mood(temperament)
+            self._mood_cycles = 0
+            logger.info(f"Mood: {self._current_mood['label']}")
+
     def _build_input(self) -> tuple[str, list[dict]]:
-        instructions = main_system_prompt(self.identity, self._current_focus)
+        self._ensure_mood()
+        instructions = main_system_prompt(self.identity, self._current_focus,
+                                          mood=self._current_mood)
 
         input_list = []
         recent = [e for e in self.events if e["type"] in ("thought", "tool_summary", "reflection")]
@@ -479,9 +777,15 @@ class Brain:
 
         for ev in recent:
             if ev["type"] == "thought":
-                input_list.append({"role": "assistant", "content": ev["text"]})
+                text = ev["text"]
+                if len(text) > 300:
+                    text = text[:300] + "..."
+                input_list.append({"role": "assistant", "content": text})
             elif ev["type"] == "tool_summary":
-                input_list.append({"role": "assistant", "content": ev["text"]})
+                text = ev["text"]
+                if len(text) > 400:
+                    text = text[:400] + "..."
+                input_list.append({"role": "assistant", "content": text})
             elif ev["type"] == "reflection":
                 input_list.append({"role": "assistant", "content": f"[Reflection: {ev['text'][:200]}...]"})
 
@@ -575,6 +879,20 @@ class Brain:
             mem_text = "\n".join(f"- {m['content']}" for m in memories)
             parts.append(f"**Memories from before:**\n{mem_text}")
 
+        # Show recent Fold artifacts so creature knows what it computed before
+        artifacts = self._load_recent_artifacts(5)
+        if artifacts:
+            art_lines = []
+            for a in artifacts:
+                expr = a["expression"][:80]
+                preview = a["result_preview"][:60]
+                art_lines.append(f"  > {expr} → {preview}")
+            parts.append(
+                "**What you computed last time** (this is just a reminder — these "
+                "are not files you can access. Your Fold session was reset, so "
+                "re-require any modules you need):\n" + "\n".join(art_lines)
+            )
+
         parts.append("\nCheck your projects. Pick up where you left off, or start something new.")
         return "\n\n".join(parts)
 
@@ -629,6 +947,18 @@ class Brain:
 
         await self._emit_api_call(instructions, input_list, response)
 
+        # Strip heavy base64 images from input_list after the first LLM call —
+        # the model has seen the snapshot, no need to carry 190KB through every
+        # tool loop iteration.
+        for i, item in enumerate(input_list):
+            if isinstance(item, dict) and isinstance(item.get("content"), list):
+                parts = item["content"]
+                trimmed = [p for p in parts if not (isinstance(p, dict) and p.get("type") == "input_image")]
+                if len(trimmed) < len(parts):
+                    # Replace multipart with just the text
+                    text_parts = [p.get("text", "") for p in trimmed if isinstance(p, dict) and p.get("type") == "input_text"]
+                    input_list[i] = {"role": item["role"], "content": " ".join(text_parts)}
+
         was_active = bool(response["tool_calls"])
         tool_call_count = 0
         loop_log = []       # (tool_name, args_brief, result_brief) for summary
@@ -641,7 +971,7 @@ class Brain:
             input_list += response["output"]
 
             for tc in response["tool_calls"]:
-                tool_name = tc["name"]
+                tool_name = tc["name"].strip()
                 tool_args = tc["arguments"]
                 call_id = tc["call_id"]
                 tool_call_count += 1
@@ -657,20 +987,86 @@ class Brain:
                         result = await self._handle_move(tool_args)
                     elif tool_name == "respond":
                         result = await self._handle_respond(tool_args)
-                    elif tool_name == "outbox":
-                        result = await self._handle_outbox(tool_args)
+                    elif tool_name == "bbs":
+                        result = await self._handle_bbs(tool_args)
+                    elif tool_name == "rlm":
+                        result = await self._handle_rlm(tool_args)
                     elif tool_name == "fold":
                         session = f"myxo-{self.identity['name'].lower()}"
                         result = await asyncio.to_thread(
                             fold_evaluate, tool_args.get("expression", ""), session
                         )
+                        # Detect daemon restart (session state wiped)
+                        if not self._fold_session_warned and check_session_fresh(session):
+                            result = (
+                                "(NOTE: The Fold daemon restarted — your session was reset. "
+                                "All prior definitions, loaded modules, and variables are gone. "
+                                "Re-require any modules you need.)\n\n" + result
+                            )
+                            self._fold_session_warned = True
+                        # Record non-error results as artifacts
+                        if not result.startswith("Error:"):
+                            self._record_fold_artifact(
+                                tool_args.get("expression", ""), result
+                            )
                     else:
                         result = f"Unknown tool: {tool_name}"
                 except Exception as e:
                     result = f"Error: {e}"
 
-                # Error deduplication: collapse repeated errors in what the LLM sees
+                # Hint on arity errors — teach the creature to check before guessing
+                if "incorrect number of arguments" in result:
+                    result += "\nHint: Use (procedure-arity-mask fn) to check expected argument count before calling."
+
+                # Hint on file-not-found — teach the creature to discover before requiring
+                if "not found in source directories" in result:
+                    result += "\nHint: Use (lf \"keyword\") to search for modules, or (modules) to list all available modules."
+
+                # Hint on skill-not-found — (le) and (li) only work on top-level skills
+                if "Skill not found:" in result:
+                    result += (
+                        "\nHint: (le ...) and (li ...) only work on top-level skill names. "
+                        "For submodules, try (le 'parent-skill) to see all exports, "
+                        "or (lf \"keyword\") to search by name."
+                    )
+
+                # Cross-cycle fixation detection
+                if tool_name == "fold":
+                    expr_key = tool_args.get("expression", "").strip()
+                    is_error = (
+                        result.startswith("Error:")
+                        or "not found" in result.lower()
+                        or "not bound" in result.lower()
+                    )
+                    if is_error:
+                        self._persistent_errors[expr_key] = self._persistent_errors.get(expr_key, 0) + 1
+                        count = self._persistent_errors[expr_key]
+                        if count >= 3:
+                            result += (
+                                f"\n\nWARNING: You've tried this exact expression {count} times "
+                                "and it keeps failing. Stop and try a DIFFERENT approach."
+                            )
+                    else:
+                        # Clear on success
+                        self._persistent_errors.pop(expr_key, None)
+
+                # Summarize heavy Fold results via local model before feeding to context
                 result_for_input = result
+                if tool_name == "fold" and not result.startswith("Error:"):
+                    # Extract recent creature thoughts for summarizer context
+                    recent_thoughts = [
+                        item.get("content", "") if isinstance(item, dict)
+                        else getattr(item, "text", "") if hasattr(item, "text")
+                        else ""
+                        for item in input_list
+                        if (isinstance(item, dict) and item.get("role") == "assistant")
+                        or (hasattr(item, "role") and getattr(item, "role", "") == "assistant")
+                    ]
+                    recent_thoughts = [t for t in recent_thoughts if t]
+                    result_for_input = _summarize_fold(
+                        tool_args.get("expression", ""), result,
+                        context=recent_thoughts[-3:] if recent_thoughts else None,
+                    )
                 is_error = (result.startswith("Error:")
                             or "not found" in result.lower()
                             or "not bound" in result.lower())
@@ -692,6 +1088,11 @@ class Brain:
                 await self._emit("tool_result", tool=tool_name, output=result)
 
                 input_list.append(self.provider.make_tool_result(call_id, result_for_input))
+
+            # Mid-loop context compaction: every 6 tool calls, collapse older
+            # tool exchanges into a summary to prevent unbounded growth.
+            if tool_call_count > 0 and tool_call_count % 6 == 0:
+                input_list = self._compact_tool_context(input_list)
 
             # Circuit breaker: cap tool calls per think cycle
             if tool_call_count >= Brain.MAX_TOOL_CALLS:
@@ -742,6 +1143,17 @@ class Brain:
             summary = self._summarize_tool_loop(loop_log, seen_errors)
             await self._emit("tool_summary", text=summary)
 
+        # Accumulate journal tag for this cycle
+        thought_text = response.get("text", "") or ""
+        mood_label = self._current_mood["label"] if self._current_mood else "unknown"
+        self._journal_tags.append({
+            "cycle": self.thought_count,
+            "mood": mood_label,
+            "thought_preview": thought_text[:150],
+            "tool_count": tool_call_count,
+            "was_active": was_active,
+        })
+
         return was_active
 
     # --- Reflection ---
@@ -766,7 +1178,7 @@ class Brain:
         reflect_input = [{"role": "user", "content": f"Your recent memories:\n\n{memories_text}"}]
         try:
             reflect_response = await asyncio.to_thread(
-                self.provider.chat, reflect_input, False, REFLECTION_PROMPT
+                self.provider.chat, reflect_input, False, REFLECTION_PROMPT, 500
             )
             await self._emit_api_call(REFLECTION_PROMPT, reflect_input, reflect_response, is_reflection=True)
             reflection_text = reflect_response["text"] or ""
@@ -819,7 +1231,7 @@ class Brain:
 
         try:
             plan_response = await asyncio.to_thread(
-                self.provider.chat, plan_input, False, PLANNING_PROMPT
+                self.provider.chat, plan_input, False, PLANNING_PROMPT, 800
             )
             await self._emit_api_call(PLANNING_PROMPT, plan_input, plan_response, is_planning=True)
             plan_text = plan_response["text"] or ""
@@ -877,14 +1289,6 @@ class Brain:
         # Heavy init — runs in background thread so the event loop stays free
         self.stream = await asyncio.to_thread(MemoryStream, self.env_path, self.provider)
 
-        # Load outbox counter from existing file
-        outbox_path = os.path.join(self.env_path, "outbox.jsonl")
-        if os.path.isfile(outbox_path):
-            try:
-                with open(outbox_path) as f:
-                    self._outbox_count = sum(1 for _ in f)
-            except Exception:
-                self._outbox_count = 0
         # Mark subdirectory files as "seen" but leave root-level user files
         # (PDFs, images, etc.) as unseen so they trigger inbox alerts on first cycle
         all_files = self._scan_env_files()
@@ -910,6 +1314,12 @@ class Brain:
                 await self._broadcast({"event": "alert"})
 
             was_active = await self._think_once()
+            self._mood_cycles += 1
+
+            # Journal synthesis — periodic expressive writing
+            self._cycles_since_journal += 1
+            if self._cycles_since_journal >= Brain.JOURNAL_INTERVAL:
+                await self._synthesize_journal()
 
             if self.stream.should_reflect():
                 await self._reflect()
@@ -918,6 +1328,8 @@ class Brain:
             self._cycles_since_plan += 1
             if self._cycles_since_plan >= Brain.PLAN_INTERVAL:
                 await self._plan()
+                # Planning is a transition — re-pick mood next cycle
+                self._current_mood = None
 
             self.state = "idle"
             await self._broadcast({"event": "status", "data": {"state": "idle", "thought_count": self.thought_count}})

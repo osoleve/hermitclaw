@@ -97,6 +97,33 @@ def _parse_response(resp_str: str) -> dict:
         return {"status": "error", "error": f"Unexpected response: {resp_str[:200]}"}
 
 
+MAX_RESULT_LENGTH = 2000  # Truncate results longer than this to avoid context blowup
+MAX_RESULT_LENGTH_LONG = 8000  # For long-running evaluations (RLM runs)
+
+# Track daemon generation per-session to detect restarts
+_daemon_generation: dict[str, float] = {}  # session_id -> daemon pid file mtime
+
+
+def _daemon_pid_mtime() -> float:
+    """Get mtime of daemon PID file — changes on daemon restart."""
+    pid_file = os.path.join(REPL_DIR, "daemon.pid")
+    try:
+        return os.path.getmtime(pid_file)
+    except OSError:
+        return 0.0
+
+
+def check_session_fresh(session_id: str) -> bool:
+    """Returns True if the daemon has restarted since we last used this session.
+
+    Call after evaluate() — if True, the session's Fold environment was reset
+    (all definitions, loaded modules, and variables are gone).
+    """
+    current = _daemon_pid_mtime()
+    prev = _daemon_generation.get(session_id, current)
+    return current != prev
+
+
 def evaluate(expression: str, session_id: str, timeout: float = 30.0) -> str:
     """Evaluate a Scheme expression via the Fold daemon. Returns result string."""
     sock_path = _ensure_daemon()
@@ -124,12 +151,70 @@ def evaluate(expression: str, session_id: str, timeout: float = 30.0) -> str:
         resp = _parse_response(payload.decode("utf-8"))
 
         if resp["status"] == "success":
-            return resp.get("result", "(no result)")
+            # Track daemon generation for restart detection
+            _daemon_generation[session_id] = _daemon_pid_mtime()
+
+            result = resp.get("result", "(no result)")
+            if len(result) > MAX_RESULT_LENGTH:
+                result = result[:MAX_RESULT_LENGTH] + f"\n(truncated — {len(result)} chars total)"
+            return result
         else:
             return f"Error: {resp.get('error', 'unknown')}"
 
     except socket.timeout:
         return f"Error: timed out after {timeout}s"
+    except ConnectionRefusedError:
+        return "Error: Fold daemon refused connection."
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        s.close()
+
+
+def evaluate_long(expression: str, session_id: str, timeout: float = 300.0) -> str:
+    """Evaluate a long-running Scheme expression (e.g. RLM runs).
+
+    Same protocol as evaluate() but with relaxed limits:
+    - 5 minute default timeout (vs 30s)
+    - 8000 char result truncation (vs 2000)
+    - 64MB response cap (vs 16MB)
+    """
+    sock_path = _ensure_daemon()
+    if not sock_path:
+        return "Error: Fold daemon is not running and could not be started."
+
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(sock_path)
+
+        req_id = uuid.uuid4().hex[:8]
+        escaped = expression.replace('\\', '\\\\').replace('"', '\\"')
+        msg = f'((type . request) (id . "{req_id}") (session . "{session_id}") (expr . "{escaped}"))'
+        data = msg.encode("utf-8")
+
+        s.sendall(struct.pack(">I", len(data)) + data)
+
+        length_bytes = _recv_exact(s, 4)
+        length = struct.unpack(">I", length_bytes)[0]
+        if length > 64 * 1024 * 1024:
+            return f"Error: response too large ({length} bytes)"
+
+        payload = _recv_exact(s, length)
+        resp = _parse_response(payload.decode("utf-8"))
+
+        if resp["status"] == "success":
+            _daemon_generation[session_id] = _daemon_pid_mtime()
+
+            result = resp.get("result", "(no result)")
+            if len(result) > MAX_RESULT_LENGTH_LONG:
+                result = result[:MAX_RESULT_LENGTH_LONG] + f"\n(truncated — {len(result)} chars total)"
+            return result
+        else:
+            return f"Error: {resp.get('error', 'unknown')}"
+
+    except socket.timeout:
+        return f"Error: RLM run timed out after {timeout}s"
     except ConnectionRefusedError:
         return "Error: Fold daemon refused connection."
     except Exception as e:

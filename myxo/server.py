@@ -270,64 +270,39 @@ async def post_snapshot(request: Request):
     brain.latest_snapshot = body.get("image")
     return {"ok": True}
 
-@app.get("/api/outbox")
-async def get_outbox(request: Request):
-    """Get all outbox messages for a crab."""
+@app.get("/api/bbs")
+async def get_bbs(request: Request):
+    """Get BBS issues filed by a creature this run."""
     brain = _get_brain(request)
-    outbox_path = os.path.join(brain.env_path, "outbox.jsonl")
-    read_path = os.path.join(brain.env_path, "outbox_read.json")
-
-    # Load messages
-    messages = []
-    if os.path.isfile(outbox_path):
-        try:
-            with open(outbox_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        messages.append(json.loads(line))
-        except Exception:
-            pass
-
-    # Load read state
-    read_ids: set[str] = set()
-    if os.path.isfile(read_path):
-        try:
-            with open(read_path) as f:
-                read_ids = set(json.load(f))
-        except Exception:
-            pass
-
-    # Annotate messages with read state
-    for msg in messages:
-        msg["read"] = msg["id"] in read_ids
-
-    return messages
+    return brain._bbs_issues
 
 
-@app.post("/api/outbox/{message_id}/read")
-async def mark_outbox_read(request: Request, message_id: str):
-    """Mark an outbox message as read."""
+@app.get("/api/journal")
+async def get_journal(request: Request):
+    """Get today's journal entries."""
     brain = _get_brain(request)
-    read_path = os.path.join(brain.env_path, "outbox_read.json")
+    from datetime import date
+    date_str = date.today().isoformat()
+    journal_path = os.path.join(brain.env_path, "journal", f"{date_str}.md")
+    try:
+        with open(journal_path, "r") as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = ""
+    return {"date": date_str, "content": content}
 
-    read_ids: list[str] = []
-    if os.path.isfile(read_path):
-        try:
-            with open(read_path) as f:
-                read_ids = json.load(f)
-        except Exception:
-            pass
 
-    if message_id not in read_ids:
-        read_ids.append(message_id)
-        try:
-            with open(read_path, "w") as f:
-                json.dump(read_ids, f)
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-
-    return {"ok": True}
+@app.get("/api/journal/{date_str}")
+async def get_journal_by_date(request: Request, date_str: str):
+    """Get journal entries for a specific date."""
+    brain = _get_brain(request)
+    journal_path = os.path.join(brain.env_path, "journal", f"{date_str}.md")
+    try:
+        with open(journal_path, "r") as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = ""
+    return {"date": date_str, "content": content}
 
 
 @app.get("/api/files")

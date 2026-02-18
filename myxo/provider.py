@@ -28,8 +28,11 @@ _FUNCTION_TOOLS = [
             "- (modules) — list all available modules\n"
             "- (blocks) — CAS statistics\n"
             "- (search \"query\") — search content-addressed blocks\n"
+            "- (procedure-arity-mask fn) — check how many args a function expects BEFORE calling it\n"
             "- Define functions, compose skills, build abstractions\n"
             "- Everything is S-expressions, everything is content-addressed\n\n"
+            "IMPORTANT: When you find a new function, ALWAYS check its arity with "
+            "(procedure-arity-mask fn) before calling it. Don't guess argument counts.\n\n"
             "The lattice is a DAG of verified skills: linalg, autodiff, algebra, "
             "geometry, physics, statistics, optimization, and many more. Explore it."
         ),
@@ -79,22 +82,77 @@ _FUNCTION_TOOLS = [
         },
     },
     {
-        "name": "outbox",
+        "name": "bbs",
         "description": (
-            "Leave an async message for your owner — fire-and-forget, no reply expected. "
-            "Use this for requests (e.g. Fold modules you'd like added), observations, "
-            "notes, or anything you want them to see when they check in. "
-            "Unlike respond, this does NOT wait for a reply and won't interrupt your thinking."
+            "File an issue on the Fold's BBS (issue tracker). Use this for bugs, "
+            "missing features, broken behavior, or observations worth tracking. "
+            "Issues are content-addressed and synced to git — your owner reviews them.\n\n"
+            "For querying existing issues, use the fold tool with:\n"
+            "- (bbs-list) — list open issues\n"
+            "- (bbs-show 'fold-NNN) — show details\n"
+            "- (bbs-comment 'fold-NNN \"text\" 'author \"your-name\") — comment\n"
+            "- (bbs-close 'fold-NNN) — close a resolved issue"
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "message": {
+                "title": {
                     "type": "string",
-                    "description": "The message to leave for your owner",
-                }
+                    "description": "Short descriptive title for the issue",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "What you found, what's broken, or what you'd like",
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["bug", "feature", "enhancement", "note"],
+                    "description": "Issue type",
+                },
+                "priority": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "Priority 1-5 (1=critical, 5=low). Default 3.",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags like 'lattice', 'search', 'module-system'",
+                },
             },
-            "required": ["message"],
+            "required": ["title", "description", "type"],
+        },
+    },
+    {
+        "name": "rlm",
+        "description": (
+            "Launch a deep, systematic exploration of a domain in the Fold. "
+            "This spawns a focused sub-agent (RLM v2) with its own fuel budget "
+            "and trajectory recording. It will work through the problem across "
+            "many steps — loading modules, inspecting skills, composing functions, "
+            "testing hypotheses — and return a structured result.\n\n"
+            "Takes 2-5 minutes. Use this for genuinely deep investigations where "
+            "you need sustained multi-step exploration, NOT for simple queries. "
+            "For quick lookups like (lf ...) or (li ...), just use the fold tool.\n\n"
+            "Examples of good use:\n"
+            "- 'Systematically map the geometry skill and its dependencies'\n"
+            "- 'Explore how autodiff composes with optics'\n"
+            "- 'Build and test a novel function combining linalg and statistics'"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The objective for the deep exploration — what to investigate or build",
+                },
+                "input": {
+                    "type": "string",
+                    "description": "Optional seed context — prior knowledge, starting points, or constraints",
+                },
+            },
+            "required": ["task"],
         },
     },
 ]

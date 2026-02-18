@@ -17,15 +17,24 @@ interface CrabInfo {
   thought_count: number;
 }
 
-interface OutboxMessage {
+interface BbsIssue {
   id: string;
   timestamp: string;
-  message: string;
-  read: boolean;
+  title: string;
+  description: string;
+  type: string;
+  priority: number;
+  labels: string[];
+  fold_result?: string;
+}
+
+interface JournalEntry {
+  text: string;
+  timestamp: string;
 }
 
 type Phase = "normal" | "dream" | "planning";
-type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean; isOwner?: boolean; isOutbox?: boolean };
+type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean; isOwner?: boolean; isBbs?: boolean };
 
 /**
  * Render an INPUT item — we only care about:
@@ -86,9 +95,15 @@ function renderFunctionCall(name: string, rawArgs: unknown, phase: Phase): Msg |
     const text = parsed?.message || String(rawArgs || "");
     return text ? { side: "right", text, phase, isRespond: true } : null;
   }
-  if (name === "outbox") {
-    const text = parsed?.message || String(rawArgs || "");
-    return text ? { side: "right", text, phase, isOutbox: true } : null;
+  if (name === "bbs") {
+    const title = parsed?.title || "";
+    const type = parsed?.type || "note";
+    const text = title ? `[BBS ${type}] ${title}` : String(rawArgs || "");
+    return text ? { side: "right", text, phase, isBbs: true } : null;
+  }
+  if (name === "rlm") {
+    const task = parsed?.task || String(rawArgs || "");
+    return { side: "right", text: `[RLM deep dive] ${task}`, phase };
   }
   let cmd: string;
   if (name === "fold") {
@@ -151,8 +166,10 @@ export default function App() {
   const [pendingVoice, setPendingVoice] = useState<string | null>(null);
   const [crabName, setCrabName] = useState("myxo");
   const [focusMode, setFocusMode] = useState(false);
-  const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>([]);
-  const [outboxOpen, setOutboxOpen] = useState(false);
+  const [bbsIssues, setBbsIssues] = useState<BbsIssue[]>([]);
+  const [bbsOpen, setBbsOpen] = useState(false);
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [journalOpen, setJournalOpen] = useState(false);
   const [crabs, setCrabs] = useState<CrabInfo[]>([]);
   const [activeCrab, setActiveCrab] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -191,8 +208,11 @@ export default function App() {
       if (msg.event === "alert") setAlert(true);
       if (msg.event === "activity") setActivity(msg.data);
       if (msg.event === "focus_mode") setFocusMode(msg.data.enabled);
-      if (msg.event === "outbox") {
-        setOutboxMessages((prev) => [...prev, { ...msg.data, read: false }]);
+      if (msg.event === "bbs") {
+        setBbsIssues((prev) => [...prev, msg.data]);
+      }
+      if (msg.event === "journal") {
+        setJournalEntries((prev) => [...prev, msg.data]);
       }
       if (msg.event === "conversation") {
         if (msg.data.state === "waiting") {
@@ -223,22 +243,40 @@ export default function App() {
     const q = `?crab=${crabId}`;
     // Fetch historical calls first (before WS connects) to avoid race
     try {
-      const [rawRes, statusRes, idRes, outboxRes] = await Promise.all([
+      const [rawRes, statusRes, idRes, bbsRes, journalRes] = await Promise.all([
         fetch(`/api/raw${q}`),
         fetch(`/api/status${q}`),
         fetch(`/api/identity${q}`),
-        fetch(`/api/outbox${q}`),
+        fetch(`/api/bbs${q}`),
+        fetch(`/api/journal${q}`),
       ]);
       const rawData = await rawRes.json();
       const statusData = await statusRes.json();
       const idData = await idRes.json();
-      const outboxData: OutboxMessage[] = await outboxRes.json();
+      const bbsData: BbsIssue[] = await bbsRes.json();
+      const journalData = await journalRes.json();
       setCalls(rawData);
       if (statusData.position) setPosition(statusData.position);
       if (statusData.focus_mode !== undefined) setFocusMode(statusData.focus_mode);
       setCrabState(statusData.state || "idle");
       if (idData.name) setCrabName(idData.name);
-      setOutboxMessages(outboxData);
+      setBbsIssues(bbsData);
+      // Parse journal content into entries
+      if (journalData.content) {
+        const entries: JournalEntry[] = [];
+        const sections = journalData.content.split(/\n## /).filter(Boolean);
+        for (const section of sections) {
+          const lines = section.split("\n");
+          const timeStr = lines[0].replace("## ", "").trim();
+          const text = lines.slice(1).join("\n").trim();
+          if (text) {
+            entries.push({ text, timestamp: timeStr });
+          }
+        }
+        setJournalEntries(entries);
+      } else {
+        setJournalEntries([]);
+      }
     } catch {
       // silently ignore fetch errors
     }
@@ -284,8 +322,10 @@ export default function App() {
     setAlert(false);
     setActivity({ type: "idle", detail: "" });
     setHasNew(false);
-    setOutboxMessages([]);
-    setOutboxOpen(false);
+    setBbsIssues([]);
+    setBbsOpen(false);
+    setJournalEntries([]);
+    setJournalOpen(false);
 
     // Update crab name immediately
     const crab = crabs.find((c) => c.id === crabId);
@@ -385,14 +425,8 @@ export default function App() {
     setChatInput("");
   };
 
-  const markOutboxRead = (msgId: string) => {
-    fetch(`/api/outbox/${msgId}/read${crabParam}`, { method: "POST" }).catch(() => {});
-    setOutboxMessages((prev) =>
-      prev.map((m) => (m.id === msgId ? { ...m, read: true } : m))
-    );
-  };
-
-  const unreadCount = outboxMessages.filter((m) => !m.read).length;
+  const bbsCount = bbsIssues.length;
+  const journalCount = journalEntries.length;
 
   const toggleFocusMode = () => {
     const next = !focusMode;
@@ -470,7 +504,7 @@ export default function App() {
     };
 
     if (msg.isOwner) return { ...base, borderLeft: `3px solid ${P.owner}` };
-    if (msg.isOutbox) return { ...base, borderLeft: `3px solid ${P.outbox}`, background: "#1a1708" };
+    if (msg.isBbs) return { ...base, borderLeft: `3px solid ${P.bbs}`, background: "#1a1708" };
     if (msg.isRespond) return { ...base, borderLeft: `3px solid ${P.respond}`, background: "#131a28" };
 
     if (msg.side === "left") {
@@ -499,13 +533,22 @@ export default function App() {
         <span style={headerTitle}>{crabName}</span>
         <span style={headerState}>{crabState}</span>
         <div style={{ flex: 1 }} />
-        {outboxMessages.length > 0 && (
+        {journalCount > 0 && (
           <button
-            style={outboxBadgeBtn}
-            onClick={() => setOutboxOpen(!outboxOpen)}
-            title="Outbox messages"
+            style={journalBadgeBtn}
+            onClick={() => setJournalOpen(!journalOpen)}
+            title="Journal entries"
           >
-            Outbox{unreadCount > 0 ? ` (${unreadCount})` : ""}
+            Journal ({journalCount})
+          </button>
+        )}
+        {bbsCount > 0 && (
+          <button
+            style={bbsBadgeBtn}
+            onClick={() => setBbsOpen(!bbsOpen)}
+            title="BBS issues filed"
+          >
+            BBS ({bbsCount})
           </button>
         )}
       </div>
@@ -535,25 +578,52 @@ export default function App() {
               })}
             </div>
           )}
-          {outboxOpen && outboxMessages.length > 0 && (
-            <div style={outboxPanel}>
-              <div style={outboxPanelHeader}>
-                <span style={outboxPanelTitle}>Outbox</span>
-                <button style={outboxCloseBtn} onClick={() => setOutboxOpen(false)}>Close</button>
+          {journalOpen && journalEntries.length > 0 && (
+            <div style={journalPanel}>
+              <div style={journalPanelHeader}>
+                <span style={journalPanelTitle}>Journal</span>
+                <button style={journalCloseBtn} onClick={() => setJournalOpen(false)}>Close</button>
               </div>
-              <div style={outboxPanelScroll}>
-                {[...outboxMessages].reverse().map((msg) => (
-                  <div
-                    key={msg.id}
-                    style={msg.read ? outboxItemRead : outboxItem}
-                    onClick={() => !msg.read && markOutboxRead(msg.id)}
-                    title={msg.read ? "Read" : "Click to mark as read"}
-                  >
-                    <div style={outboxItemTime}>
-                      {new Date(msg.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                      {!msg.read && <span style={outboxUnreadDot} />}
+              <div style={journalPanelScroll}>
+                {[...journalEntries].reverse().map((entry, idx) => (
+                  <div key={idx} style={journalEntry}>
+                    <div style={journalEntryTime}>
+                      {entry.timestamp.includes("T")
+                        ? new Date(entry.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                        : entry.timestamp}
                     </div>
-                    <div style={outboxItemMsg}>{msg.message}</div>
+                    <div style={journalEntryText}>{entry.text}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {bbsOpen && bbsIssues.length > 0 && (
+            <div style={bbsPanel}>
+              <div style={bbsPanelHeader}>
+                <span style={bbsPanelTitle}>BBS Issues</span>
+                <button style={bbsCloseBtn} onClick={() => setBbsOpen(false)}>Close</button>
+              </div>
+              <div style={bbsPanelScroll}>
+                {[...bbsIssues].reverse().map((issue) => (
+                  <div key={issue.id} style={bbsItem}>
+                    <div style={bbsItemHeader}>
+                      <span style={bbsItemType(issue.type)}>{issue.type}</span>
+                      <span style={bbsItemId}>{issue.id}</span>
+                      <span style={bbsItemPriority}>P{issue.priority}</span>
+                    </div>
+                    <div style={bbsItemTitle}>{issue.title}</div>
+                    <div style={bbsItemDesc}>{issue.description}</div>
+                    {issue.labels && issue.labels.length > 0 && (
+                      <div style={bbsItemLabels}>
+                        {issue.labels.map((l) => (
+                          <span key={l} style={bbsLabel}>{l}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div style={bbsItemTime}>
+                      {new Date(issue.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -666,7 +736,8 @@ const P = {
   dream:       "#a78bfa",
   plan:        "#34d399",
   respond:     "#f97316",
-  outbox:      "#f5c542",
+  bbs:         "#f5c542",
+  journal:     "#e8b4b8",
   owner:       "#60a5fa",
   error:       "#f87171",
   text:        "#c8d6e5",
@@ -1015,29 +1086,29 @@ const newMsgPill: React.CSSProperties = {
   borderTop: `1px solid ${P.border}`,
 };
 
-// ── Outbox ──
-const outboxBadgeBtn: React.CSSProperties = {
+// ── BBS ──
+const bbsBadgeBtn: React.CSSProperties = {
   padding: "5px 12px",
   borderRadius: 6,
-  border: `1px solid ${P.outbox}44`,
+  border: `1px solid ${P.bbs}44`,
   background: "transparent",
-  color: P.outbox,
+  color: P.bbs,
   fontSize: 11,
   fontWeight: 600,
   cursor: "pointer",
   fontFamily: MONO,
 };
 
-const outboxPanel: React.CSSProperties = {
-  borderBottom: `1px solid ${P.outbox}33`,
+const bbsPanel: React.CSSProperties = {
+  borderBottom: `1px solid ${P.bbs}33`,
   background: "#14120a",
-  maxHeight: 240,
+  maxHeight: 320,
   display: "flex",
   flexDirection: "column",
   flexShrink: 0,
 };
 
-const outboxPanelHeader: React.CSSProperties = {
+const bbsPanelHeader: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
@@ -1045,16 +1116,16 @@ const outboxPanelHeader: React.CSSProperties = {
   borderBottom: `1px solid ${P.border}`,
 };
 
-const outboxPanelTitle: React.CSSProperties = {
+const bbsPanelTitle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
-  color: P.outbox,
+  color: P.bbs,
   textTransform: "uppercase",
   letterSpacing: "0.8px",
   fontFamily: MONO,
 };
 
-const outboxCloseBtn: React.CSSProperties = {
+const bbsCloseBtn: React.CSSProperties = {
   background: "transparent",
   border: "none",
   color: P.dim,
@@ -1063,49 +1134,171 @@ const outboxCloseBtn: React.CSSProperties = {
   fontFamily: MONO,
 };
 
-const outboxPanelScroll: React.CSSProperties = {
+const bbsPanelScroll: React.CSSProperties = {
   flex: 1,
   overflowY: "auto",
   padding: "4px 0",
 };
 
-const outboxItem: React.CSSProperties = {
+const bbsItem: React.CSSProperties = {
   padding: "8px 16px",
-  cursor: "pointer",
-  borderLeft: `3px solid ${P.outbox}`,
+  borderLeft: `3px solid ${P.bbs}`,
   marginLeft: 12,
+  marginBottom: 4,
 };
 
-const outboxItemRead: React.CSSProperties = {
-  ...outboxItem,
-  borderLeftColor: P.border,
-  opacity: 0.5,
-  cursor: "default",
+const bbsItemHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginBottom: 3,
 };
 
-const outboxItemTime: React.CSSProperties = {
+const typeColors: Record<string, string> = {
+  bug: "#f87171",
+  feature: "#60a5fa",
+  enhancement: "#34d399",
+  note: P.bbs,
+};
+
+const bbsItemType = (type: string): React.CSSProperties => ({
+  fontSize: 9,
+  fontWeight: 700,
+  color: typeColors[type] || P.bbs,
+  textTransform: "uppercase",
+  letterSpacing: "0.5px",
+  fontFamily: MONO,
+});
+
+const bbsItemId: React.CSSProperties = {
   fontSize: 10,
   color: P.dim,
   fontFamily: MONO,
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
+};
+
+const bbsItemPriority: React.CSSProperties = {
+  fontSize: 9,
+  color: P.dim,
+  fontFamily: MONO,
+  opacity: 0.7,
+};
+
+const bbsItemTitle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: P.text,
+  fontFamily: MONO,
+  lineHeight: "1.4",
   marginBottom: 2,
 };
 
-const outboxUnreadDot: React.CSSProperties = {
-  width: 5,
-  height: 5,
-  borderRadius: "50%",
-  background: P.outbox,
-  display: "inline-block",
+const bbsItemDesc: React.CSSProperties = {
+  fontSize: 11,
+  color: P.dim,
+  fontFamily: MONO,
+  lineHeight: "1.4",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  marginBottom: 4,
 };
 
-const outboxItemMsg: React.CSSProperties = {
+const bbsItemLabels: React.CSSProperties = {
+  display: "flex",
+  gap: 4,
+  flexWrap: "wrap",
+  marginBottom: 3,
+};
+
+const bbsLabel: React.CSSProperties = {
+  fontSize: 9,
+  padding: "1px 6px",
+  borderRadius: 3,
+  border: `1px solid ${P.border}`,
+  color: P.dim,
+  fontFamily: MONO,
+};
+
+const bbsItemTime: React.CSSProperties = {
+  fontSize: 10,
+  color: P.dim,
+  fontFamily: MONO,
+  opacity: 0.6,
+};
+
+// ── Journal ──
+const journalBadgeBtn: React.CSSProperties = {
+  padding: "5px 12px",
+  borderRadius: 6,
+  border: `1px solid ${P.journal}44`,
+  background: "transparent",
+  color: P.journal,
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: "pointer",
+  fontFamily: MONO,
+};
+
+const journalPanel: React.CSSProperties = {
+  borderBottom: `1px solid ${P.journal}33`,
+  background: "#1a1214",
+  maxHeight: 320,
+  display: "flex",
+  flexDirection: "column",
+  flexShrink: 0,
+};
+
+const journalPanelHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "8px 16px",
+  borderBottom: `1px solid ${P.border}`,
+};
+
+const journalPanelTitle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: P.journal,
+  textTransform: "uppercase",
+  letterSpacing: "0.8px",
+  fontFamily: MONO,
+};
+
+const journalCloseBtn: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  color: P.dim,
+  fontSize: 11,
+  cursor: "pointer",
+  fontFamily: MONO,
+};
+
+const journalPanelScroll: React.CSSProperties = {
+  flex: 1,
+  overflowY: "auto",
+  padding: "4px 0",
+};
+
+const journalEntry: React.CSSProperties = {
+  padding: "8px 16px",
+  borderLeft: `3px solid ${P.journal}`,
+  marginLeft: 12,
+  marginBottom: 4,
+};
+
+const journalEntryTime: React.CSSProperties = {
+  fontSize: 10,
+  color: P.dim,
+  fontFamily: MONO,
+  opacity: 0.6,
+  marginBottom: 4,
+};
+
+const journalEntryText: React.CSSProperties = {
   fontSize: 12,
   color: P.text,
   fontFamily: MONO,
-  lineHeight: "1.5",
+  lineHeight: "1.6",
   whiteSpace: "pre-wrap",
   wordBreak: "break-word",
 };
