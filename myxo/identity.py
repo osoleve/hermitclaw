@@ -195,7 +195,7 @@ def create_identity() -> dict:
     print()
     name = input("  What will you name it? > ").strip()
     if not name:
-        name = "Crab"
+        name = "Creature"
 
     # Set environment path to {name}_box/
     project_root = os.path.dirname(os.path.dirname(__file__))

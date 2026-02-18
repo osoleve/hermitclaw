@@ -426,22 +426,22 @@ class LocalProvider(Provider):
         }
 
 
-def create_provider(crab_config: dict) -> Provider:
-    """Factory — create the right provider from a crab's config dict."""
-    provider_type = crab_config.get("provider", "openai")
+def create_provider(creature_config: dict) -> Provider:
+    """Factory — create the right provider from a creature's config dict."""
+    provider_type = creature_config.get("provider", "openai")
 
     if provider_type == "local":
         return LocalProvider(
-            base_url=crab_config["base_url"],
-            model=crab_config["model"],
-            api_key=crab_config.get("api_key") or "not-needed",
-            embedding_api_key=crab_config.get("embedding_api_key") or crab_config.get("api_key"),
-            embedding_model=crab_config.get("embedding_model", "text-embedding-3-small"),
-            embedding_base_url=crab_config.get("embedding_base_url") or crab_config.get("base_url"),
+            base_url=creature_config["base_url"],
+            model=creature_config["model"],
+            api_key=creature_config.get("api_key") or "not-needed",
+            embedding_api_key=creature_config.get("embedding_api_key") or creature_config.get("api_key"),
+            embedding_model=creature_config.get("embedding_model", "text-embedding-3-small"),
+            embedding_base_url=creature_config.get("embedding_base_url") or creature_config.get("base_url"),
         )
     else:
         return OpenAIProvider(
-            api_key=crab_config["api_key"],
-            model=crab_config["model"],
-            embedding_model=crab_config.get("embedding_model", "text-embedding-3-small"),
+            api_key=creature_config["api_key"],
+            model=creature_config["model"],
+            embedding_model=creature_config.get("embedding_model", "text-embedding-3-small"),
         )

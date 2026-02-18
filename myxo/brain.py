@@ -94,7 +94,7 @@ class Brain:
         "center": {"x": 5, "y": 5},
     }
 
-    # Tiles the crab cannot walk on (from Smallville collision layer)
+    # Tiles the creature cannot walk on (from Smallville collision layer)
     _BLOCKED: set[tuple[int, int]] = set()
 
     @staticmethod
@@ -126,7 +126,7 @@ class Brain:
                   ".toml", ".js", ".ts", ".html", ".css", ".sh", ".log"}
     _PDF_EXTS = {".pdf"}
     _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-    # Internal files the crab/system manages — never trigger alerts
+    # Internal files the creature/system manages — never trigger alerts
     _IGNORE_FILES = {"memory_stream.jsonl", "identity.json", "outbox.jsonl",
                       "outbox_read.json", "fold_artifacts.jsonl", "memory_state.json"}
     # Internal files that live in the root but shouldn't trigger inbox alerts
@@ -141,11 +141,11 @@ class Brain:
     # Tool loop circuit breaker — max tool calls per think cycle
     MAX_TOOL_CALLS = 12
 
-    def __init__(self, identity: dict, env_path: str, provider=None, crab_config: dict = None):
+    def __init__(self, identity: dict, env_path: str, provider=None, creature_config: dict = None):
         self.identity = identity
         self.env_path = env_path
         self.provider = provider
-        self.crab_config = crab_config or {}
+        self.creature_config = creature_config or {}
         self.events: list[dict] = []
         self.api_calls: list[dict] = []
         self.thought_count: int = 0
@@ -468,9 +468,9 @@ class Brain:
         })
 
         # Build the provider config for the Fold-side RLM
-        api_key = self.crab_config.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
-        model = self.crab_config.get("rlm_model") or self.crab_config.get("model", "moonshotai/kimi-k2.5")
-        base_url = self.crab_config.get("base_url", "https://openrouter.ai/api/v1")
+        api_key = self.creature_config.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
+        model = self.creature_config.get("rlm_model") or self.creature_config.get("model", "moonshotai/kimi-k2.5")
+        base_url = self.creature_config.get("base_url", "https://openrouter.ai/api/v1")
 
         esc = self._scheme_escape
         input_clause = f' "input" "{esc(seed_input)}"' if seed_input else ""
@@ -579,7 +579,7 @@ class Brain:
             self._wake_event.set()
 
     def receive_conversation_reply(self, text: str):
-        """Deliver a reply while the crab is waiting (inside a respond tool call)."""
+        """Deliver a reply while the creature is waiting (inside a respond tool call)."""
         self._conversation_reply = text
         self._conversation_event.set()
 
@@ -839,7 +839,7 @@ class Brain:
                     content_parts.append({"type": "input_image", "image_url": f["image"]})
             content_parts.append({"type": "input_text", "text": nudge})
             input_list.append({"role": "user", "content": content_parts if len(content_parts) > 1 else nudge})
-            # Reset plan counter so the crab has time to work on the file
+            # Reset plan counter so the creature has time to work on the file
             self._cycles_since_plan = 0
             self._inbox_pending = []
         # Include room snapshot on wake-up only (first think cycle)
@@ -857,7 +857,7 @@ class Brain:
         return instructions, input_list
 
     def _build_wake_nudge(self) -> str:
-        """Rich wake-up context — reads the crab's own files so it knows what it built."""
+        """Rich wake-up context — reads the creature's own files so it knows what it built."""
         parts = ["You're waking up. Here's your world:\n"]
 
         # Read projects.md
@@ -930,7 +930,7 @@ class Brain:
     # --- Think cycle ---
 
     async def _think_once(self) -> bool:
-        """Run one think cycle. Returns True if the crab did something (tool calls)."""
+        """Run one think cycle. Returns True if the creature did something (tool calls)."""
         self.state = "thinking"
         await self._broadcast({"event": "status", "data": {"state": "thinking", "thought_count": self.thought_count}})
 
@@ -1303,8 +1303,8 @@ class Brain:
         # Adaptive pacing: active (tool calls) = 30s, idle = 60s
         # User messages wake immediately via _wake_event
         self._wake_event = asyncio.Event()
-        idle_pace = self.crab_config.get("idle_pace_seconds", config.get("idle_pace_seconds", 60))
-        active_pace = self.crab_config.get("active_pace_seconds", config.get("active_pace_seconds", 30))
+        idle_pace = self.creature_config.get("idle_pace_seconds", config.get("idle_pace_seconds", 60))
+        active_pace = self.creature_config.get("active_pace_seconds", config.get("active_pace_seconds", 30))
 
         while self.running:
             # Check for new files anywhere in environment/

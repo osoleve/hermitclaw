@@ -37,7 +37,7 @@ def load_config() -> dict:
     config.setdefault("memory_retrieval_count", 3)
     config.setdefault("embedding_model", "text-embedding-3-small")
     config.setdefault("recency_decay_rate", 0.995)
-    config.setdefault("crabs", {})
+    config.setdefault("creatures", {})
 
     # Resolve environment_path relative to project root
     project_root = os.path.dirname(os.path.dirname(__file__))
@@ -47,18 +47,18 @@ def load_config() -> dict:
     return config
 
 
-def get_crab_config(crab_id: str, base_config: dict = None) -> dict:
-    """Merge global config with per-crab overrides. Returns a flat dict."""
+def get_creature_config(creature_id: str, base_config: dict = None) -> dict:
+    """Merge global config with per-creature overrides. Returns a flat dict."""
     if base_config is None:
         base_config = config
 
     # Start with global settings
-    merged = {k: v for k, v in base_config.items() if k != "crabs"}
+    merged = {k: v for k, v in base_config.items() if k != "creatures"}
 
-    # Layer on per-crab overrides
-    per_crab = base_config.get("crabs") or {}
-    if crab_id in per_crab and isinstance(per_crab[crab_id], dict):
-        merged.update(per_crab[crab_id])
+    # Layer on per-creature overrides
+    per_creature = base_config.get("creatures") or {}
+    if creature_id in per_creature and isinstance(per_creature[creature_id], dict):
+        merged.update(per_creature[creature_id])
 
     # Ensure embedding_api_key falls back to api_key for local providers
     if "embedding_api_key" not in merged:

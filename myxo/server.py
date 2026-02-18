@@ -16,14 +16,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from myxo.brain import Brain
-from myxo.config import config, get_crab_config
+from myxo.config import config, get_creature_config
 from myxo.identity import _derive_traits
 from myxo.provider import create_provider
 
 logger = logging.getLogger("myxo.server")
 
 app = FastAPI(title="Myxo")
-brains: dict[str, Brain] = {}  # crab_id -> Brain
+brains: dict[str, Brain] = {}  # creature_id -> Brain
 
 
 def create_app(all_brains: dict[str, Brain]) -> FastAPI:
@@ -33,7 +33,7 @@ def create_app(all_brains: dict[str, Brain]) -> FastAPI:
     return app
 
 
-async def _supervise_brain(crab_id: str, brain: Brain):
+async def _supervise_brain(creature_id: str, brain: Brain):
     """Supervise a brain coroutine — restart on crash with exponential backoff."""
     backoff = 5
     max_backoff = 120
@@ -49,7 +49,7 @@ async def _supervise_brain(crab_id: str, brain: Brain):
             elapsed = time.monotonic() - start
             tb = traceback.format_exc()
             logger.error(
-                f"Brain '{crab_id}' died (restart #{restart_count}, "
+                f"Brain '{creature_id}' died (restart #{restart_count}, "
                 f"ran {elapsed:.0f}s): {e}"
             )
 
@@ -57,8 +57,8 @@ async def _supervise_brain(crab_id: str, brain: Brain):
             brain._log_jsonl({
                 "timestamp": datetime.now().isoformat(),
                 "type": "coroutine_death",
-                "crab_id": crab_id,
-                "crab_name": brain.identity.get("name", crab_id),
+                "creature_id": creature_id,
+                "creature_name": brain.identity.get("name", creature_id),
                 "error": str(e),
                 "traceback": tb,
                 "thought_count": brain.thought_count,
@@ -87,16 +87,16 @@ async def _supervise_brain(crab_id: str, brain: Brain):
             if not brain.running:
                 break
 
-            logger.info(f"Restarting '{crab_id}' in {backoff}s...")
+            logger.info(f"Restarting '{creature_id}' in {backoff}s...")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, max_backoff)
 
 
 def _get_brain(request: Request) -> Brain:
-    """Look up brain by ?crab=ID query param, or default to first."""
-    crab_id = request.query_params.get("crab")
-    if crab_id and crab_id in brains:
-        return brains[crab_id]
+    """Look up brain by ?creature=ID query param, or default to first."""
+    creature_id = request.query_params.get("creature")
+    if creature_id and creature_id in brains:
+        return brains[creature_id]
     return next(iter(brains.values()))
 
 
@@ -111,21 +111,21 @@ app.add_middleware(
 
 # --- WebSocket ---
 
-@app.websocket("/ws/{crab_id}")
-async def websocket_endpoint(ws: WebSocket, crab_id: str):
-    brain = brains.get(crab_id)
+@app.websocket("/ws/{creature_id}")
+async def websocket_endpoint(ws: WebSocket, creature_id: str):
+    brain = brains.get(creature_id)
     if not brain:
         await ws.close(code=4004)
         return
     await ws.accept()
     brain.add_ws_client(ws)
-    logger.info(f"WebSocket client connected to {crab_id}")
+    logger.info(f"WebSocket client connected to {creature_id}")
     try:
         while True:
             await ws.receive_text()  # keep connection alive
     except WebSocketDisconnect:
         brain.remove_ws_client(ws)
-        logger.info(f"WebSocket client disconnected from {crab_id}")
+        logger.info(f"WebSocket client disconnected from {creature_id}")
 
 
 @app.websocket("/ws")
@@ -148,35 +148,35 @@ async def websocket_default(ws: WebSocket):
 
 # --- REST API ---
 
-@app.get("/api/crabs")
-async def get_crabs():
-    """List all running crabs."""
+@app.get("/api/creatures")
+async def get_creatures():
+    """List all running creatures."""
     return [
         {
-            "id": crab_id,
+            "id": creature_id,
             "name": brain.identity["name"],
             "state": brain.state,
             "thought_count": brain.thought_count,
         }
-        for crab_id, brain in brains.items()
+        for creature_id, brain in brains.items()
     ]
 
 
-@app.post("/api/crabs")
-async def create_crab(request: Request):
-    """Create a new crab at runtime."""
+@app.post("/api/creatures")
+async def create_creature(request: Request):
+    """Create a new creature at runtime."""
     body = await request.json()
     name = body.get("name", "").strip()
     if not name:
         return {"ok": False, "error": "name is required"}
 
-    crab_id = name.lower()
-    if crab_id in brains:
-        return {"ok": False, "error": f"crab '{crab_id}' already exists"}
+    creature_id = name.lower()
+    if creature_id in brains:
+        return {"ok": False, "error": f"creature '{creature_id}' already exists"}
 
     # Create box directory
     project_root = os.path.dirname(os.path.dirname(__file__))
-    box_path = os.path.join(project_root, f"{crab_id}_box")
+    box_path = os.path.join(project_root, f"{creature_id}_box")
     os.makedirs(box_path, exist_ok=True)
 
     # Generate identity with random entropy (no interactive keyboard mashing)
@@ -197,19 +197,19 @@ async def create_crab(request: Request):
         json.dump(identity, f, indent=2)
 
     # Start the brain
-    crab_cfg = get_crab_config(crab_id)
-    provider = create_provider(crab_cfg)
-    brain = Brain(identity, box_path, provider, crab_config=crab_cfg)
-    brains[crab_id] = brain
-    asyncio.create_task(_supervise_brain(crab_id, brain))
-    logger.info(f"Created and started new crab: {name} ({crab_id})")
+    creature_cfg = get_creature_config(creature_id)
+    provider = create_provider(creature_cfg)
+    brain = Brain(identity, box_path, provider, creature_config=creature_cfg)
+    brains[creature_id] = brain
+    asyncio.create_task(_supervise_brain(creature_id, brain))
+    logger.info(f"Created and started new creature: {name} ({creature_id})")
 
-    return {"ok": True, "id": crab_id, "name": name}
+    return {"ok": True, "id": creature_id, "name": name}
 
 
 @app.get("/api/identity")
 async def get_identity(request: Request):
-    """Get the crab's identity."""
+    """Get the creature's identity."""
     brain = _get_brain(request)
     return brain.identity
 
@@ -354,7 +354,7 @@ async def startup():
     async def _start_brains():
         # Small delay so the server finishes binding the port first
         await asyncio.sleep(0.5)
-        for crab_id, brain in brains.items():
-            asyncio.create_task(_supervise_brain(crab_id, brain))
-            logger.info(f"{brain.identity['name']} ({crab_id}) starting...")
+        for creature_id, brain in brains.items():
+            asyncio.create_task(_supervise_brain(creature_id, brain))
+            logger.info(f"{brain.identity['name']} ({creature_id}) starting...")
     asyncio.create_task(_start_brains())

@@ -59,7 +59,7 @@ The Fold provides a skill lattice (verified DAG of computational capabilities), 
 
 ### Config Layering (`config.py`)
 
-`config.yaml` has global defaults at the top level and per-creature overrides under `crabs:`. `get_crab_config(crab_id)` merges them into a flat dict. Environment variables (`OPENAI_API_KEY`, `MYXO_MODEL`, `MYXO_PORT`) override config file values.
+`config.yaml` has global defaults at the top level and per-creature overrides under `creatures:`. `get_creature_config(creature_id)` merges them into a flat dict. Environment variables (`OPENAI_API_KEY`, `MYXO_MODEL`, `MYXO_PORT`) override config file values.
 
 ### Memory System (`memory.py`)
 
