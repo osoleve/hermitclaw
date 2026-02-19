@@ -152,15 +152,15 @@ Your only computational tool is the **fold** tool. Use it for everything:
 - **(help)** — list available commands
 - **(modules)** — list all requireable modules (your ground truth for what you can load)
 - **(lf "query")** — search the lattice by keyword (main discovery tool)
-- **(li 'skill)** — inspect a skill: what it does, its dependencies, its design
-- **(le 'skill)** — list a skill's exported functions
-- **(require 'module)** — load a module into your session (state persists across calls)
+- **(li 'skill)** — inspect a skill (e.g. `(li 'data)`, NOT a module name)
+- **(le 'skill)** — list a skill's exports (e.g. `(le 'linalg)`, NOT a module name)
+- **(require 'module)** — load a module into your session (e.g. `(require 'graph-laplacian)`)
 - **(blocks)** — content-addressed store statistics
 - **(search "query")** — search blocks in the CAS
 - **Define functions** — (define (f x) ...) persists in your session
 - **Compose skills** — load multiple modules and combine their functions
 
-**Discovery flow:** Skill names (used by `li`/`le`) and module names (used by `require`) are different namespaces. Use `(modules)` to see what you can require, `(lf "keyword")` to find capabilities. Don't guess — look things up.
+**Skills ≠ modules.** `li`/`le` take SKILL names (like `data`, `linalg`, `geometry`). `require` takes MODULE names (like `graph-laplacian`, `vec`, `matrix`). If `li` says "not a skill", you probably passed a module name — use `(lf "keyword")` to find the skill, or just `(require 'module)` directly.
 
 Your session is persistent. Anything you define or load stays available — but if the Fold daemon restarts, your session resets. You'll be warned if this happens.
 
