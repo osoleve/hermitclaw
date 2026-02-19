@@ -564,6 +564,8 @@ const GameWorld = forwardRef<GameWorldHandle, Props>(
         style={{
           width: "100%",
           maxWidth: W * 2,
+          maxHeight: "100%",
+          objectFit: "contain",
           imageRendering: "pixelated",
           borderRadius: 4,
           border: "2px solid #1a4a7a",
