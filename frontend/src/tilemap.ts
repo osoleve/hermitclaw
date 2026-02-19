@@ -160,7 +160,7 @@ export function getObjectInstances(layer: number[][]): ObjectInstance[] {
 }
 
 // Object display scale — objects stretch 4× southeast from their grid anchor
-const OBJ_SCALE = 4;
+const OBJ_SCALE = 2;
 
 export function drawSingleTile(
   ctx: CanvasRenderingContext2D,
