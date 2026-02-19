@@ -81,6 +81,17 @@ React 18 + TypeScript + Vite. Single-page app with two panes: pixel-art room (HT
 - **Adaptive pacing** — active cycles (tool calls happened) sleep 30s, idle cycles sleep 60s. User messages wake immediately via `_wake_event`.
 - **All computation is Fold expressions** — the creature cannot execute shell commands, Python scripts, or web searches.
 
+## Landing the Plane
+
+This project is worked on by multiple agents across distributed sessions. **Work isn't done until it's committed and pushed to the remote.** At the end of every work session — before you stop, before context runs out — land the plane:
+
+1. Build the frontend if you touched `frontend/src/` (`cd frontend && npm run build`)
+2. Commit all changes with a clear message
+3. `git push origin main`
+4. If the Fold submodule was modified, commit and push there first, then update the submodule pointer in hermitclaw
+
+Don't leave uncommitted work on the floor. Don't leave commits unpushed. If you're running low on context, prioritize shipping what you have over starting something new.
+
 ## Design Principles
 
 - **Radically simple code.** Each file does one thing. No frameworks beyond FastAPI and React.
