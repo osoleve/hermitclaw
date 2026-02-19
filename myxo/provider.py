@@ -33,6 +33,9 @@ _FUNCTION_TOOLS = [
             "- Everything is S-expressions, everything is content-addressed\n\n"
             "IMPORTANT: When you find a new function, ALWAYS check its arity with "
             "(procedure-arity-mask fn) before calling it. Don't guess argument counts.\n\n"
+            "TIP: Type a bare symbol name (e.g. just matrix-multiply) to get its "
+            "documentation — type signature, description, source skill, and require path. "
+            "Much faster than searching.\n\n"
             "The lattice is a DAG of verified skills: linalg, autodiff, algebra, "
             "geometry, physics, statistics, optimization, and many more. Explore it."
         ),
@@ -151,6 +154,21 @@ _FUNCTION_TOOLS = [
                 },
             },
             "required": ["task"],
+        },
+    },
+    {
+        "name": "restart_fold",
+        "description": (
+            "Restart the Fold daemon. Use this when the Fold is broken — worker died, "
+            "connection refused, persistent errors. This kills the daemon and restarts "
+            "it fresh. Your session will be reset (all loaded modules and definitions "
+            "are gone), so re-require anything you need afterward.\n\n"
+            "Only use this when the Fold is genuinely broken, not for normal errors "
+            "like syntax mistakes or missing modules."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
         },
     },
     {

@@ -57,6 +57,8 @@ Thin client that talks to the Fold daemon via Unix domain socket with length-pre
 
 The Fold provides a skill lattice (verified DAG of computational capabilities), content-addressed storage, a module system, and fuel-bounded evaluation. See `fold/CLAUDE.md` for full Fold architecture.
 
+**Procedure repr:** The REPL supports a Python-style `__repr__` for procedures — evaluating a bare symbol (e.g. just `matrix-multiply` without parens) returns a rich repr: type signature, docstring, source skill, and `(require 'module)` path. This is the fastest way for the creature to look up documentation on a known function.
+
 ### Config Layering (`config.py`)
 
 `config.yaml` has global defaults at the top level and per-creature overrides under `creatures:`. `get_creature_config(creature_id)` merges them into a flat dict. Environment variables (`OPENAI_API_KEY`, `MYXO_MODEL`, `MYXO_PORT`) override config file values.
@@ -72,6 +74,16 @@ FastAPI app with REST endpoints and per-creature WebSocket channels. The Brain b
 ### Frontend (`frontend/`)
 
 React 18 + TypeScript + Vite. Single-page app with two panes: pixel-art room (HTML5 Canvas) and chat feed. All styles are inline CSS-in-JS objects.
+
+## Process Management
+
+When testing myxo, stale processes from previous runs are common and should be cleaned up without asking:
+- **Kill stale myxo instances** (`python myxo/main.py`) from previous test runs freely
+- **Kill stale Fold workers** (`repl-worker-socket.ss`) from previous sessions freely
+- **Restart the Fold daemon** (`cd ~/fold && bash daemon.sh stop && bash daemon.sh start`) as needed
+- **Kill runaway workers** (100% CPU Scheme processes) immediately — they're zombies
+
+These are ephemeral test processes, not production services. Clean them up as part of normal test workflow.
 
 ## Key Conventions
 

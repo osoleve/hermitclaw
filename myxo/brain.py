@@ -427,6 +427,36 @@ class Brain:
         """Escape a string for embedding in a Scheme string literal."""
         return s.replace("\\", "\\\\").replace('"', '\\"')
 
+    async def _handle_restart_fold(self) -> str:
+        """Handle the restart_fold tool — kill and restart the Fold daemon."""
+        logger.warning(f"{self.identity['name']} requested Fold daemon restart")
+
+        # Kill the daemon
+        killed = await asyncio.to_thread(fold_kill_daemon)
+        if not killed:
+            # Daemon might already be dead — that's fine, we'll start a fresh one
+            logger.info("No daemon to kill (already dead or not found)")
+
+        # Brief pause to let the process fully die
+        await asyncio.sleep(1.5)
+
+        # Verify restart by pinging — _ensure_daemon() auto-starts if needed
+        session = f"myxo-{self.identity['name'].lower()}"
+        ping = await asyncio.to_thread(fold_evaluate, "(+ 1 1)", session)
+
+        # Reset session tracking state
+        self._fold_consecutive_timeouts = 0
+        self._fold_session_warned = True  # suppress the "daemon restarted" note on next fold call
+
+        if ping.strip() == "2":
+            return (
+                "Fold daemon restarted successfully. Your session has been reset — "
+                "all loaded modules, definitions, and variables are gone. "
+                "Re-require any modules you need."
+            )
+        else:
+            return f"Fold daemon restart attempted but ping returned: {ping}"
+
     async def _handle_bbs(self, args: dict) -> str:
         """Handle the bbs tool — file an issue on the Fold BBS."""
         title = args.get("title", "")
@@ -1003,6 +1033,8 @@ class Brain:
             return {"type": "conversing", "detail": "Talking to someone..."}
         if tool_name == "bbs":
             return {"type": "filing", "detail": "Filing an issue..."}
+        if tool_name == "restart_fold":
+            return {"type": "restarting", "detail": "Restarting the Fold daemon..."}
         if tool_name == "rlm":
             task = tool_args.get("task", "")
             detail = task[:60] + ("..." if len(task) > 60 else "")
@@ -1354,6 +1386,8 @@ class Brain:
                         result = await self._handle_respond(tool_args)
                     elif tool_name == "bbs":
                         result = await self._handle_bbs(tool_args)
+                    elif tool_name == "restart_fold":
+                        result = await self._handle_restart_fold()
                     elif tool_name == "rlm":
                         result = await self._handle_rlm(tool_args)
                     elif tool_name == "ask_librarian":
