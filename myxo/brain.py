@@ -12,7 +12,6 @@ from myxo.config import config
 from myxo.memory import MemoryStream
 from myxo.prompts import main_system_prompt, pick_mood, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE, JOURNAL_PROMPT
 from myxo.fold_client import evaluate as fold_evaluate, evaluate_long as fold_evaluate_long, check_session_fresh
-from myxo.summarizer import summarize_result as _summarize_fold
 
 ARTIFACTS_FILENAME = "fold_artifacts.jsonl"
 
@@ -1216,23 +1215,7 @@ class Brain:
                         # Clear on success
                         self._persistent_errors.pop(expr_key, None)
 
-                # Summarize heavy Fold results via local model before feeding to context
                 result_for_input = result
-                if tool_name == "fold" and not result.startswith("Error:"):
-                    # Extract recent creature thoughts for summarizer context
-                    recent_thoughts = [
-                        item.get("content", "") if isinstance(item, dict)
-                        else getattr(item, "text", "") if hasattr(item, "text")
-                        else ""
-                        for item in input_list
-                        if (isinstance(item, dict) and item.get("role") == "assistant")
-                        or (hasattr(item, "role") and getattr(item, "role", "") == "assistant")
-                    ]
-                    recent_thoughts = [t for t in recent_thoughts if t]
-                    result_for_input = _summarize_fold(
-                        tool_args.get("expression", ""), result,
-                        context=recent_thoughts[-3:] if recent_thoughts else None,
-                    )
                 is_error = (result.startswith("Error:")
                             or "not found" in result.lower()
                             or "not bound" in result.lower())

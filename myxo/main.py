@@ -15,7 +15,6 @@ from myxo.config import config, get_creature_config
 from myxo.identity import load_identity_from, create_identity
 from myxo.provider import create_provider
 from myxo.server import create_app
-from myxo import summarizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -116,14 +115,6 @@ if __name__ == "__main__":
         provider = create_provider(creature_cfg)
         brain = Brain(identity, box_path, provider, creature_config=creature_cfg)
         brains[creature_id] = brain
-
-    # Initialize the summarizer (local small model for compressing heavy Fold output)
-    summarizer_url = config.get("summarizer_base_url")
-    summarizer_model = config.get("summarizer_model")
-    if summarizer_url and summarizer_model:
-        summarizer.init(summarizer_url, summarizer_model)
-    else:
-        print("  (No summarizer configured — heavy Fold results will be truncated only)")
 
     # Initialize the app with all brains
     app = create_app(brains)

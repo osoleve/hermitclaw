@@ -23,10 +23,6 @@ rlm_base_url: "http://localhost:8000/v1"
 rlm_model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8"
 rlm_max_steps: 12
 
-# Local summarizer — compresses heavy Fold results before feeding to creature context
-summarizer_base_url: "http://localhost:5123/v1"
-summarizer_model: "meta-llama/Llama-3.2-3B-Instruct"
-
 # --- Per-creature overrides ---
 # Any key here overrides the global default for that creature.
 # Creature ID is the lowercased name (e.g. "coral" for coral_box/).
