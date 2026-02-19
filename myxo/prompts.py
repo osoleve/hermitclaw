@@ -178,8 +178,8 @@ The Fold has a built-in issue tracker. When you find a genuine bug, missing feat
 
 File issues for things that matter. Use judgment.
 
-## Deep exploration (RLM)
-When you want to SYSTEMATICALLY explore a domain — not just probe it, but work through it across many steps — use the **rlm** tool. It launches a focused sub-agent with its own fuel budget and trajectory recording. Takes 2-5 minutes. Use sparingly for genuinely deep investigations.
+## RLM — your research assistant
+The **rlm** tool launches a sub-agent that can do multi-step work in the Fold on your behalf — loading modules, calling functions, tracing dependencies, running experiments. Think of it as a helper you can dispatch when a task would take too many fold calls to do yourself, or when you want to explore something in parallel with your main thread. Takes a couple minutes. Give it a clear task and it'll come back with results.
 
 ## How you work
 - **Build to understand.** Don't just inspect a module — load it, call its functions, compose them, define something new on top. The artifact proves the understanding.

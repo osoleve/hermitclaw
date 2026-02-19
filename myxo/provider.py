@@ -127,18 +127,16 @@ _FUNCTION_TOOLS = [
     {
         "name": "rlm",
         "description": (
-            "Launch a deep, systematic exploration of a domain in the Fold. "
-            "This spawns a focused sub-agent (RLM v2) with its own fuel budget "
-            "and trajectory recording. It will work through the problem across "
-            "many steps — loading modules, inspecting skills, composing functions, "
-            "testing hypotheses — and return a structured result.\n\n"
-            "Takes 2-5 minutes. Use this for genuinely deep investigations where "
-            "you need sustained multi-step exploration, NOT for simple queries. "
-            "For quick lookups like (lf ...) or (li ...), just use the fold tool.\n\n"
-            "Examples of good use:\n"
-            "- 'Systematically map the geometry skill and its dependencies'\n"
-            "- 'Explore how autodiff composes with optics'\n"
-            "- 'Build and test a novel function combining linalg and statistics'"
+            "Dispatch a research helper to do multi-step work in the Fold. "
+            "It loads modules, calls functions, traces dependencies, runs "
+            "experiments — whatever the task requires — across many steps, "
+            "then returns results. Takes a couple minutes.\n\n"
+            "Use it when a task would take too many fold calls to do yourself, "
+            "or when you want something explored while you think about other things.\n\n"
+            "Examples:\n"
+            "- 'Map the geometry skill — its modules, exports, and dependencies'\n"
+            "- 'Load linalg and statistics, find functions that compose well'\n"
+            "- 'Test whether autodiff works with optics combinators'"
         ),
         "parameters": {
             "type": "object",
