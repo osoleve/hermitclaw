@@ -182,7 +182,11 @@ def load_identity_from(box_path: str) -> dict | None:
     path = os.path.join(box_path, "identity.json")
     if os.path.isfile(path):
         with open(path, "r") as f:
-            return json.load(f)
+            identity = json.load(f)
+        # Backfill owner fields for pre-existing identities
+        identity.setdefault("owner", "your owner")
+        identity.setdefault("owner_bio", "")
+        return identity
     return None
 
 
@@ -207,8 +211,12 @@ def create_identity() -> dict:
     genome_hex = seed_bytes.hex()
     traits = _derive_traits(seed_bytes)
 
+    owner = input("  Owner name (or press Enter to skip) > ").strip() or "your owner"
+
     identity = {
         "name": name,
+        "owner": owner,
+        "owner_bio": "",
         "genome": genome_hex,
         "traits": traits,
         "born": time.strftime("%Y-%m-%d %H:%M:%S"),

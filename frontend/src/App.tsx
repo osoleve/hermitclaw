@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import GameWorld, { GameWorldHandle } from "./GameWorld";
+import { PALETTE } from "./world";
 
 interface ApiCall {
   timestamp: string;
@@ -177,6 +178,7 @@ export default function App() {
   const gameRef = useRef<GameWorldHandle>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const wsBackoffRef = useRef(1000);
 
   const creatureParam = activeCreature ? `?creature=${activeCreature}` : "";
 
@@ -193,6 +195,10 @@ export default function App() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${location.host}/ws/${creatureId}`);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      wsBackoffRef.current = 1000; // reset backoff on successful connect
+    };
 
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
@@ -230,11 +236,13 @@ export default function App() {
     };
 
     ws.onclose = () => {
-      // Reconnect after a brief delay if this is still the active WS
+      // Reconnect with exponential backoff if this is still the active WS
       if (wsRef.current === ws) {
+        const delay = wsBackoffRef.current;
+        wsBackoffRef.current = Math.min(delay * 2, 30000);
         setTimeout(() => {
           if (wsRef.current === ws) connectWs(creatureId);
-        }, 3000);
+        }, delay);
       }
     };
   }, []);
@@ -438,57 +446,60 @@ export default function App() {
     }).catch(() => {});
   };
 
-  // Build a deduplicated conversation stream.
+  // Build a deduplicated conversation stream (memoized on calls).
   // Each API call's input contains the FULL accumulated history.
   // We only render NEW items in each call's input (items we haven't seen yet)
   // plus all output items (what the model returned).
-  const messages: Msg[] = [];
-  let seenInputItems = 0;
+  const messages = useMemo(() => {
+    const msgs: Msg[] = [];
+    let seenInputItems = 0;
 
-  calls.forEach((call, i) => {
-    const isDream = call.is_dream ?? false;
-    const isPlanning = call.is_planning ?? false;
-    const phase: Phase = isDream ? "dream" : isPlanning ? "planning" : "normal";
+    calls.forEach((call, i) => {
+      const isDream = call.is_dream ?? false;
+      const isPlanning = call.is_planning ?? false;
+      const phase: Phase = isDream ? "dream" : isPlanning ? "planning" : "normal";
 
-    // System prompt (first call or when instructions meaningfully changed) — skip for dream/planning calls
-    const strip = (s: string) => s.replace(/Right now it is .+\n/, "").replace(/## Current (mood|focus)\n[\s\S]*?(?=\n##)/, "");
-    if (!isDream && !isPlanning && (i === 0 || strip(call.instructions) !== strip(calls[i - 1]?.instructions ?? ""))) {
-      messages.push({ side: "system", text: call.instructions, phase: "normal" });
-    }
+      // System prompt (first call or when instructions meaningfully changed) — skip for dream/planning calls
+      const strip = (s: string) => s.replace(/Right now it is .+\n/, "").replace(/## Current (mood|focus)\n[\s\S]*?(?=\n##)/, "");
+      if (!isDream && !isPlanning && (i === 0 || strip(call.instructions) !== strip(calls[i - 1]?.instructions ?? ""))) {
+        msgs.push({ side: "system", text: call.instructions, phase: "normal" });
+      }
 
-    // Dream divider
-    if (isDream && (i === 0 || !calls[i - 1]?.is_dream)) {
-      messages.push({ side: "system", text: "Reflecting...", phase: "dream" });
-    }
+      // Dream divider
+      if (isDream && (i === 0 || !calls[i - 1]?.is_dream)) {
+        msgs.push({ side: "system", text: "Reflecting...", phase: "dream" });
+      }
 
-    // Planning divider
-    if (isPlanning && (i === 0 || !calls[i - 1]?.is_planning)) {
-      messages.push({ side: "system", text: "Planning...", phase: "planning" });
-    }
+      // Planning divider
+      if (isPlanning && (i === 0 || !calls[i - 1]?.is_planning)) {
+        msgs.push({ side: "system", text: "Planning...", phase: "planning" });
+      }
 
-    // If input didn't grow (rebuilt from scratch for a new think cycle), reset.
-    // Accumulated tool-loop inputs always grow strictly (new function_call_outputs),
-    // so equal-or-smaller means the input was rebuilt by _build_input().
-    if (seenInputItems >= call.input.length) {
-      seenInputItems = 0;
-    }
+      // If input didn't grow (rebuilt from scratch for a new think cycle), reset.
+      // Accumulated tool-loop inputs always grow strictly (new function_call_outputs),
+      // so equal-or-smaller means the input was rebuilt by _build_input().
+      if (seenInputItems >= call.input.length) {
+        seenInputItems = 0;
+      }
 
-    // Only render NEW input items (skip already-rendered history)
-    const newInputs = call.input.slice(seenInputItems);
-    for (const item of newInputs) {
-      const msg = renderInputItem(item, phase);
-      if (msg) messages.push(msg);
-    }
+      // Only render NEW input items (skip already-rendered history)
+      const newInputs = call.input.slice(seenInputItems);
+      for (const item of newInputs) {
+        const msg = renderInputItem(item, phase);
+        if (msg) msgs.push(msg);
+      }
 
-    // Render all output items (what the model returned this call)
-    for (const item of call.output) {
-      const msg = renderOutputItem(item, phase);
-      if (msg) messages.push(msg);
-    }
+      // Render all output items (what the model returned this call)
+      for (const item of call.output) {
+        const msg = renderOutputItem(item, phase);
+        if (msg) msgs.push(msg);
+      }
 
-    // Track how many items the next call's input will start with
-    seenInputItems = call.input.length + call.output.length;
-  });
+      // Track how many items the next call's input will start with
+      seenInputItems = call.input.length + call.output.length;
+    });
+    return msgs;
+  }, [calls]);
 
   const stateColor = (s: string) => {
     if (s === "thinking") return P.glow;
@@ -725,23 +736,11 @@ export default function App() {
   );
 }
 
-// ── Palette shorthand ──
+// ── Palette shorthand (extends shared PALETTE from world.ts) ──
 const P = {
-  void:        "#080c14",
-  surface:     "#0f1520",
-  border:      "#1a2535",
-  glow:        "#00e5a0",
-  glowCyan:    "#00c8ff",
-  computation: "#f0b040",
-  dream:       "#a78bfa",
-  plan:        "#34d399",
-  respond:     "#f97316",
+  ...PALETTE,
   bbs:         "#f5c542",
   journal:     "#e8b4b8",
-  owner:       "#60a5fa",
-  error:       "#f87171",
-  text:        "#c8d6e5",
-  dim:         "#5a6a7a",
 };
 
 const MONO = "'IBM Plex Mono', monospace";
