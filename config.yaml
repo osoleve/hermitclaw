@@ -20,7 +20,7 @@ recency_decay_rate: 0.995      # exponential decay rate for recency scoring
 # Uses local vLLM by default (no auth needed). Falls back to creature's
 # model/base_url if rlm_base_url is not set.
 rlm_base_url: "http://localhost:8000/v1"
-rlm_model: "Qwen/Qwen3-32B-FP8"
+rlm_model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8"
 rlm_max_steps: 12
 
 # Local summarizer — compresses heavy Fold results before feeding to creature context

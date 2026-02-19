@@ -92,7 +92,10 @@ if __name__ == "__main__":
     if brains:
         names = [b.identity["name"] for b in brains.values()]
         print(f"\n  Found {len(brains)} creature(s): {', '.join(names)}")
-        answer = input("  Create a new one? (y/N) > ").strip().lower()
+        try:
+            answer = input("  Create a new one? (y/N) > ").strip().lower()
+        except EOFError:
+            answer = "n"
         if answer == "y":
             identity = create_identity()
             creature_id = identity["name"].lower()
