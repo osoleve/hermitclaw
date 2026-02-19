@@ -33,8 +33,16 @@ interface JournalEntry {
   timestamp: string;
 }
 
+interface RlmRun {
+  id: string;
+  task: string;
+  status: "running" | "completed" | "exhausted" | "error" | string;
+  output: string;
+  timestamp: string;
+}
+
 type Phase = "normal" | "dream" | "planning";
-type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean; isOwner?: boolean; isBbs?: boolean };
+type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean; isOwner?: boolean; isBbs?: boolean; isRlm?: boolean };
 
 /**
  * Render an INPUT item — we only care about:
@@ -103,7 +111,7 @@ function renderFunctionCall(name: string, rawArgs: unknown, phase: Phase): Msg |
   }
   if (name === "rlm") {
     const task = parsed?.task || String(rawArgs || "");
-    return { side: "right", text: `[RLM deep dive] ${task}`, phase };
+    return { side: "right", text: `[RLM deep dive] ${task}`, phase, isRlm: true };
   }
   let cmd: string;
   if (name === "fold") {
@@ -170,6 +178,8 @@ export default function App() {
   const [bbsOpen, setBbsOpen] = useState(false);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [journalOpen, setJournalOpen] = useState(false);
+  const [rlmRuns, setRlmRuns] = useState<RlmRun[]>([]);
+  const [rlmOpen, setRlmOpen] = useState(false);
   const [creatures, setCreatures] = useState<CreatureInfo[]>([]);
   const [activeCreature, setActiveCreature] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -214,6 +224,19 @@ export default function App() {
       if (msg.event === "journal") {
         setJournalEntries((prev) => [...prev, msg.data]);
       }
+      if (msg.event === "rlm") {
+        const run = msg.data as RlmRun;
+        setRlmRuns((prev) => {
+          const idx = prev.findIndex((r) => r.id === run.id);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = run;
+            return updated;
+          }
+          return [...prev, run];
+        });
+        if (run.status === "running") setRlmOpen(true);
+      }
       if (msg.event === "conversation") {
         if (msg.data.state === "waiting") {
           setConversing(true);
@@ -243,24 +266,27 @@ export default function App() {
     const q = `?creature=${creatureId}`;
     // Fetch historical calls first (before WS connects) to avoid race
     try {
-      const [rawRes, statusRes, idRes, bbsRes, journalRes] = await Promise.all([
+      const [rawRes, statusRes, idRes, bbsRes, journalRes, rlmRes] = await Promise.all([
         fetch(`/api/raw${q}`),
         fetch(`/api/status${q}`),
         fetch(`/api/identity${q}`),
         fetch(`/api/bbs${q}`),
         fetch(`/api/journal${q}`),
+        fetch(`/api/rlm${q}`),
       ]);
       const rawData = await rawRes.json();
       const statusData = await statusRes.json();
       const idData = await idRes.json();
       const bbsData: BbsIssue[] = await bbsRes.json();
       const journalData = await journalRes.json();
+      const rlmData: RlmRun[] = await rlmRes.json();
       setCalls(rawData);
       if (statusData.position) setPosition(statusData.position);
       if (statusData.focus_mode !== undefined) setFocusMode(statusData.focus_mode);
       setCreatureState(statusData.state || "idle");
       if (idData.name) setCreatureName(idData.name);
       setBbsIssues(bbsData);
+      setRlmRuns(rlmData);
       // Parse journal content into entries
       if (journalData.content) {
         const entries: JournalEntry[] = [];
@@ -326,6 +352,8 @@ export default function App() {
     setBbsOpen(false);
     setJournalEntries([]);
     setJournalOpen(false);
+    setRlmRuns([]);
+    setRlmOpen(false);
 
     // Update creature name immediately
     const creature = creatures.find((c) => c.id === creatureId);
@@ -505,6 +533,7 @@ export default function App() {
 
     if (msg.isOwner) return { ...base, borderLeft: `3px solid ${P.owner}` };
     if (msg.isBbs) return { ...base, borderLeft: `3px solid ${P.bbs}`, background: "#1a1708" };
+    if (msg.isRlm) return { ...base, borderLeft: `3px solid ${P.rlm}`, background: "#0f0f1a" };
     if (msg.isRespond) return { ...base, borderLeft: `3px solid ${P.respond}`, background: "#131a28" };
 
     if (msg.side === "left") {
@@ -533,6 +562,15 @@ export default function App() {
         <span style={headerTitle}>{creatureName}</span>
         <span style={headerState}>{creatureState}</span>
         <div style={{ flex: 1 }} />
+        {rlmRuns.length > 0 && (
+          <button
+            style={rlmRuns.some((r) => r.status === "running") ? rlmBadgeBtnActive : rlmBadgeBtn}
+            onClick={() => setRlmOpen(!rlmOpen)}
+            title="RLM deep explorations"
+          >
+            RLM ({rlmRuns.length})
+          </button>
+        )}
         {journalCount > 0 && (
           <button
             style={journalBadgeBtn}
@@ -576,6 +614,32 @@ export default function App() {
                   </button>
                 );
               })}
+            </div>
+          )}
+          {rlmOpen && rlmRuns.length > 0 && (
+            <div style={rlmPanel}>
+              <div style={rlmPanelHeader}>
+                <span style={rlmPanelTitle}>Deep Exploration</span>
+                <button style={rlmCloseBtn} onClick={() => setRlmOpen(false)}>Close</button>
+              </div>
+              <div style={rlmPanelScroll}>
+                {[...rlmRuns].reverse().map((run) => (
+                  <div key={run.id} style={rlmItem}>
+                    <div style={rlmItemHeader}>
+                      <span style={rlmStatusBadge(run.status)}>
+                        {run.status === "running" ? "running..." : run.status}
+                      </span>
+                      <span style={rlmItemTime}>
+                        {new Date(run.timestamp).toLocaleString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      </span>
+                    </div>
+                    <div style={rlmItemTask}>{run.task}</div>
+                    {run.output && run.status !== "running" && (
+                      <div style={rlmItemOutput}>{run.output}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           {journalOpen && journalEntries.length > 0 && (
@@ -737,6 +801,7 @@ const P = {
   plan:        "#34d399",
   respond:     "#f97316",
   bbs:         "#f5c542",
+  rlm:         "#818cf8",
   journal:     "#e8b4b8",
   owner:       "#60a5fa",
   error:       "#f87171",
@@ -1301,4 +1366,125 @@ const journalEntryText: React.CSSProperties = {
   lineHeight: "1.6",
   whiteSpace: "pre-wrap",
   wordBreak: "break-word",
+};
+
+// ── RLM ──
+const rlmBadgeBtn: React.CSSProperties = {
+  padding: "5px 12px",
+  borderRadius: 6,
+  border: `1px solid ${P.rlm}44`,
+  background: "transparent",
+  color: P.rlm,
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: "pointer",
+  fontFamily: MONO,
+};
+
+const rlmBadgeBtnActive: React.CSSProperties = {
+  ...rlmBadgeBtn,
+  background: `${P.rlm}22`,
+  borderColor: P.rlm,
+};
+
+const rlmPanel: React.CSSProperties = {
+  borderBottom: `1px solid ${P.rlm}33`,
+  background: "#0f0f1a",
+  maxHeight: 360,
+  display: "flex",
+  flexDirection: "column",
+  flexShrink: 0,
+};
+
+const rlmPanelHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "8px 16px",
+  borderBottom: `1px solid ${P.border}`,
+};
+
+const rlmPanelTitle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: P.rlm,
+  textTransform: "uppercase",
+  letterSpacing: "0.8px",
+  fontFamily: MONO,
+};
+
+const rlmCloseBtn: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  color: P.dim,
+  fontSize: 11,
+  cursor: "pointer",
+  fontFamily: MONO,
+};
+
+const rlmPanelScroll: React.CSSProperties = {
+  flex: 1,
+  overflowY: "auto",
+  padding: "4px 0",
+};
+
+const rlmItem: React.CSSProperties = {
+  padding: "8px 16px",
+  borderLeft: `3px solid ${P.rlm}`,
+  marginLeft: 12,
+  marginBottom: 4,
+};
+
+const rlmItemHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginBottom: 4,
+};
+
+const rlmStatusColors: Record<string, string> = {
+  running: "#818cf8",
+  completed: "#34d399",
+  exhausted: "#f0b040",
+  error: "#f87171",
+};
+
+const rlmStatusBadge = (status: string): React.CSSProperties => ({
+  fontSize: 9,
+  fontWeight: 700,
+  color: rlmStatusColors[status] || P.dim,
+  textTransform: "uppercase",
+  letterSpacing: "0.5px",
+  fontFamily: MONO,
+});
+
+const rlmItemTime: React.CSSProperties = {
+  fontSize: 10,
+  color: P.dim,
+  fontFamily: MONO,
+  opacity: 0.6,
+};
+
+const rlmItemTask: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: P.text,
+  fontFamily: MONO,
+  lineHeight: "1.4",
+  marginBottom: 4,
+};
+
+const rlmItemOutput: React.CSSProperties = {
+  fontSize: 11,
+  color: P.dim,
+  fontFamily: MONO,
+  lineHeight: "1.5",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  padding: "6px 10px",
+  background: "#0a0a14",
+  borderRadius: 3,
+  border: `1px solid ${P.border}`,
+  maxHeight: 120,
+  overflow: "auto",
 };

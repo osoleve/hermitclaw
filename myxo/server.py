@@ -277,6 +277,13 @@ async def get_bbs(request: Request):
     return brain._bbs_issues
 
 
+@app.get("/api/rlm")
+async def get_rlm(request: Request):
+    """Get RLM runs from this session."""
+    brain = _get_brain(request)
+    return brain._rlm_runs
+
+
 @app.get("/api/journal")
 async def get_journal(request: Request):
     """Get today's journal entries."""

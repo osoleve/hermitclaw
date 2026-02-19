@@ -16,6 +16,13 @@ embedding_model: "openai/text-embedding-3-small"
 embedding_base_url: "https://openrouter.ai/api/v1"
 recency_decay_rate: 0.995      # exponential decay rate for recency scoring
 
+# RLM deep exploration — sub-agent for multi-step Fold investigations
+# Uses local vLLM by default (no auth needed). Falls back to creature's
+# model/base_url if rlm_base_url is not set.
+rlm_base_url: "http://localhost:8000/v1"
+rlm_model: "Qwen/Qwen3-32B-FP8"
+rlm_max_steps: 12
+
 # Local summarizer — compresses heavy Fold results before feeding to creature context
 summarizer_base_url: "http://localhost:5123/v1"
 summarizer_model: "meta-llama/Llama-3.2-3B-Instruct"

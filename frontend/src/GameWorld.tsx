@@ -306,6 +306,26 @@ function drawComputing(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.fillText(symbols[blink], x, y);
 }
 
+function drawDeepExploration(ctx: CanvasRenderingContext2D, x: number, y: number, t: number) {
+  // Pulsing concentric rings — sonar/radar feel
+  const phase = (t % 2000) / 2000;
+  for (let i = 0; i < 3; i++) {
+    const ringPhase = (phase + i / 3) % 1;
+    const radius = 4 + ringPhase * 12;
+    const alpha = (1 - ringPhase) * 0.7;
+    ctx.strokeStyle = `rgba(129, 140, 248, ${alpha})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // Center dot
+  ctx.fillStyle = "#818cf8";
+  ctx.beginPath();
+  ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 
 // ════════════════════════════════════════════════
 // Component
@@ -497,6 +517,8 @@ const GameWorld = forwardRef<GameWorldHandle, Props>(
           const actY = charY;
           if (act.type === "computing") {
             drawComputing(ctx, actX, actY);
+          } else if (act.type === "deep_exploration") {
+            drawDeepExploration(ctx, actX, actY, t);
           } else if (act.type === "conversing") {
             ctx.strokeStyle = "#ea580c";
             ctx.lineWidth = 2;

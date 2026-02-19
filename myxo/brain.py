@@ -165,6 +165,9 @@ class Brain:
         # BBS issues created this run — exposed via /api/bbs
         self._bbs_issues: list[dict] = []
 
+        # RLM runs this session — exposed via /api/rlm
+        self._rlm_runs: list[dict] = []
+
         # Planning state
         self._cycles_since_plan: int = 0
         self._current_focus: str = ""
@@ -456,34 +459,88 @@ class Brain:
 
         return result
 
+    @staticmethod
+    def _parse_rlm_result(result: str) -> tuple[str, str]:
+        """Parse an RLM S-expression result into (status, output_text)."""
+        if result.startswith("Error:"):
+            return "error", result
+
+        prefix = "(rlm2-run-result "
+        if not result.startswith(prefix):
+            return "unknown", result[:300]
+
+        rest = result[len(prefix):]
+        # Extract status word (completed, exhausted, etc.)
+        space_idx = rest.find(" ")
+        if space_idx < 0:
+            return "unknown", result[:300]
+        status = rest[:space_idx]
+        rest = rest[space_idx + 1:]
+
+        # Extract the quoted output string (handles escaped quotes)
+        if not rest.startswith('"'):
+            return status, rest[:300]
+
+        chars = []
+        i = 1
+        while i < len(rest):
+            if rest[i] == '\\' and i + 1 < len(rest):
+                chars.append(rest[i + 1])
+                i += 2
+            elif rest[i] == '"':
+                break
+            else:
+                chars.append(rest[i])
+                i += 1
+        return status, ''.join(chars)
+
     async def _handle_rlm(self, args: dict) -> str:
         """Handle the rlm tool — launch a deep exploration sub-agent in the Fold."""
         task = args.get("task", "")
         seed_input = args.get("input", "")
         name = self.identity["name"]
+        import time as _time
+        run_id = f"rlm-{int(_time.time())}"
+        started_at = datetime.now().isoformat()
+
+        # Track and broadcast start
+        run_data = {
+            "id": run_id,
+            "task": task,
+            "status": "running",
+            "output": "",
+            "timestamp": started_at,
+        }
+        self._rlm_runs.append(run_data)
 
         await self._broadcast({
             "event": "activity",
             "data": {"type": "deep_exploration", "detail": f"RLM: {task[:60]}"},
         })
+        await self._broadcast({
+            "event": "rlm",
+            "data": {**run_data},
+        })
 
         # Build the provider config for the Fold-side RLM
-        # make-rlm-provider signature: (endpoint model-id api-key-env api-format)
-        #   - endpoint: full URL including /chat/completions
-        #   - api-key-env: name of env var in .env.agents (NOT the key itself)
-        #   - api-format: 'openai or 'anthropic
+        rlm_base = self.creature_config.get("rlm_base_url")
         model = self.creature_config.get("rlm_model") or self.creature_config.get("model", "moonshotai/kimi-k2.5")
-        base_url = self.creature_config.get("base_url", "https://openrouter.ai/api/v1")
-        endpoint = base_url.rstrip("/") + "/chat/completions"
+
+        if rlm_base:
+            endpoint = rlm_base.rstrip("/") + "/chat/completions"
+            is_local = rlm_base.startswith("http://localhost") or rlm_base.startswith("http://127.")
+            api_key_scheme = "#f" if is_local else '"OPENAI_API_KEY"'
+        else:
+            base_url = self.creature_config.get("base_url", "https://openrouter.ai/api/v1")
+            endpoint = base_url.rstrip("/") + "/chat/completions"
+            api_key_scheme = '"OPENAI_API_KEY"'
 
         esc = self._scheme_escape
         seed_escaped = esc(seed_input) if seed_input else ""
 
-        # Build explicit config: 8 steps max (reasoning models ~25s/step → ~200s)
-        # make-rlm2-config: provider sys-prompt max-steps max-fuel chunk-size
-        #                    max-depth loop-window context-budget verifier
-        max_steps = self.creature_config.get("rlm_max_steps", 8)
-        rlm_timeout = 45 * max_steps  # ~45s per step headroom
+        max_steps = self.creature_config.get("rlm_max_steps", 12)
+        per_step = 10 if api_key_scheme == "#f" else 45
+        rlm_timeout = per_step * max_steps + 30
 
         expr = (
             '(begin '
@@ -491,27 +548,40 @@ class Brain:
             f'(let* ([provider (make-rlm-provider '
             f'  "{esc(endpoint)}" '
             f'  "{esc(model)}" '
-            f'  "OPENAI_API_KEY" '
+            f'  {api_key_scheme} '
             f"  'openai)] "
             f' [config (make-rlm2-config provider "" '
             f'  {max_steps} 50000 2000 2 3 8000 #f)]) '
             f'  (rlm2-run config "{esc(task)}" "{seed_escaped}")))'
         )
 
-        # Use unique session per RLM run — if a previous run timed out from
-        # Python's side, the Fold worker doesn't know and keeps executing.
-        # Reusing the session would queue behind the zombie evaluation.
-        import time as _time
-        session = f"myxo-{name.lower()}-rlm-{int(_time.time())}"
+        session = f"myxo-{name.lower()}-{run_id}"
         logger.info(f"RLM run starting (max {max_steps} steps, {rlm_timeout}s timeout, session={session}): {task[:80]}")
 
         result = await asyncio.to_thread(fold_evaluate_long, expr, session, timeout=rlm_timeout)
 
-        # Record as artifact on success
+        # Parse and broadcast completion
+        rlm_status, rlm_output = self._parse_rlm_result(result)
+        run_data["status"] = rlm_status
+        run_data["output"] = rlm_output[:500]
+
+        await self._broadcast({
+            "event": "rlm",
+            "data": {**run_data},
+        })
+
         if not result.startswith("Error:"):
             self._record_fold_artifact(f"(rlm: {task[:200]})", result)
 
-        logger.info(f"RLM run complete: {len(result)} chars")
+        logger.info(f"RLM run complete ({rlm_status}): {len(result)} chars")
+
+        # Return clean parsed output to the model, not the raw S-expression
+        if rlm_status == "completed":
+            return f"[RLM completed] {rlm_output}"
+        elif rlm_status == "exhausted":
+            return f"[RLM exhausted — hit step limit] {rlm_output}"
+        elif rlm_status == "error":
+            return f"[RLM error] {rlm_output}"
         return result
 
     async def _synthesize_journal(self):
