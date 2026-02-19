@@ -436,16 +436,11 @@ const GameWorld = forwardRef<GameWorldHandle, Props>(
           ctx.stroke();
         }
 
-        // ── Layer 3: Objects behind creature (y > creature row) + creature + objects in front ──
-        const creatureRow = Math.round(pos.y);
+        // ── Layer 3: All objects (drawn before creature so Glom is always on top) ──
         const objects = objectsRef.current;
-
-        // Draw objects behind creature
         if (tilesetRef.current) {
           for (const obj of objects) {
-            if (obj.row < creatureRow) {
-              drawSingleTile(ctx, tilesetRef.current, obj, t);
-            }
+            drawSingleTile(ctx, tilesetRef.current, obj, t);
           }
         }
 
@@ -487,15 +482,6 @@ const GameWorld = forwardRef<GameWorldHandle, Props>(
               tint: tintDef?.color,
               tintAmount: tintDef?.amount,
             });
-          }
-        }
-
-        // Draw objects in front of creature
-        if (tilesetRef.current) {
-          for (const obj of objects) {
-            if (obj.row >= creatureRow) {
-              drawSingleTile(ctx, tilesetRef.current, obj, t);
-            }
           }
         }
 

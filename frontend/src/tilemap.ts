@@ -159,6 +159,9 @@ export function getObjectInstances(layer: number[][]): ObjectInstance[] {
   return objects;
 }
 
+// Object display scale — objects stretch 4× southeast from their grid anchor
+const OBJ_SCALE = 4;
+
 export function drawSingleTile(
   ctx: CanvasRenderingContext2D,
   tileset: HTMLImageElement,
@@ -172,6 +175,8 @@ export function drawSingleTile(
   const th = def.h ?? TILE;
   const destX = obj.col * TILE;
   const destY = obj.row * TILE;
+  const destW = TILE * OBJ_SCALE;
+  const destH = TILE * OBJ_SCALE;
 
   let srcX = def.x;
   if (def.animated) {
@@ -179,5 +184,5 @@ export function drawSingleTile(
     srcX = def.x + frameIdx * tw;
   }
 
-  ctx.drawImage(tileset, srcX, def.y, tw, th, destX, destY, TILE, TILE);
+  ctx.drawImage(tileset, srcX, def.y, tw, th, destX, destY, destW, destH);
 }
