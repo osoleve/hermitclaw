@@ -153,6 +153,37 @@ _FUNCTION_TOOLS = [
             "required": ["task"],
         },
     },
+    {
+        "name": "ask_librarian",
+        "description": (
+            "Ask the lattice librarian to find functions, modules, and capabilities "
+            "in the Fold. The librarian is a specialized search agent that navigates "
+            "the lattice deeply — inspecting modules, reading documentation, "
+            "cross-referencing across skills — and returns a synthesized answer.\n\n"
+            "Use this instead of raw (lf ...) searches when you need to understand "
+            "*how* to use something, not just *whether* it exists. The librarian can "
+            "delegate to sub-librarians when a query spans multiple domains.\n\n"
+            "Good queries:\n"
+            "- 'How do I compute eigenvalues of a matrix?'\n"
+            "- 'What modules handle polynomial arithmetic?'\n"
+            "- 'Find functions for BFS/DFS on graphs'\n"
+            "- 'What optimization methods are available and how do they compare?'"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What you want to find or understand in the lattice",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Optional context about what you're working on, to help the librarian give relevant answers",
+                },
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 

@@ -664,6 +664,178 @@ class Brain:
             return f"[RLM error] {rlm_output}"
         return f"[RLM {rlm_status}] {rlm_output}"
 
+    _LIBRARIAN_SYSTEM_PROMPT = (
+        "You are a lattice librarian. Your job is to find functions, understand "
+        "their signatures, and report clearly. You have the full Fold lattice "
+        "(~2700 exports across 33 skills) to search.\n\n"
+        "Strategy:\n"
+        "- Start with (search \"query\") to find relevant skills and functions\n"
+        "- Use (inspect skill) and (exports skill) to understand what's available\n"
+        "- Use (lookup symbol) to get type signatures and documentation\n"
+        "- When a query spans multiple skills or domains, use (delegate task input) "
+        "to send focused sub-queries to sub-librarians — each handles one domain\n"
+        "- Use (eval ...) sparingly to verify a function works as expected\n"
+        "- Submit a clear, structured answer: function names, (require 'module) paths, "
+        "brief usage examples\n\n"
+        "Do NOT perform heavy computation. Your job is to find and explain, not to solve.\n"
+        "Prefer breadth over depth — cover all relevant skills before diving deep into one."
+    )
+
+    async def _handle_ask_librarian(self, args: dict) -> str:
+        """Handle the ask_librarian tool — launch a search-specialized RLM sub-agent."""
+        query = args.get("query", "")
+        context = args.get("context", "")
+        name = self.identity["name"]
+        import time as _time
+        run_id = f"lib-{int(_time.time())}"
+        started_at = datetime.now().isoformat()
+
+        # Track and broadcast start
+        run_data = {
+            "id": run_id,
+            "task": f"[librarian] {query}",
+            "status": "running",
+            "output": "",
+            "steps": [],
+            "timestamp": started_at,
+        }
+        self._rlm_runs.append(run_data)
+
+        await self._broadcast({
+            "event": "activity",
+            "data": {"type": "consulting_librarian", "detail": f"Librarian: {query[:60]}"},
+        })
+        await self._broadcast({
+            "event": "rlm",
+            "data": {**run_data},
+        })
+
+        # Build provider config — same as RLM but with librarian system prompt
+        rlm_base = self.creature_config.get("rlm_base_url")
+        model = self.creature_config.get("rlm_model") or self.creature_config.get("model", "moonshotai/kimi-k2.5")
+
+        if rlm_base:
+            endpoint = rlm_base.rstrip("/") + "/chat/completions"
+            is_local = rlm_base.startswith("http://localhost") or rlm_base.startswith("http://127.")
+            api_key_scheme = "#f" if is_local else '"OPENAI_API_KEY"'
+        else:
+            base_url = self.creature_config.get("base_url", "https://openrouter.ai/api/v1")
+            endpoint = base_url.rstrip("/") + "/chat/completions"
+            api_key_scheme = '"OPENAI_API_KEY"'
+
+        esc = self._scheme_escape
+
+        # Librarian-specific budgets: lighter than full RLM
+        max_steps = self.creature_config.get("librarian_max_steps", 15)
+        max_tokens = self.creature_config.get("librarian_max_tokens", 1024)
+        max_fuel = 30000
+        per_step = 20 if api_key_scheme == "#f" else 45
+        lib_timeout = per_step * max_steps + 30
+
+        # Build seed input from query + context
+        seed = query
+        if context:
+            seed = f"{query}\n\nContext: {context}"
+
+        progress_file = f"/tmp/rlm2-progress-{run_id}.log"
+
+        expr = (
+            '(begin '
+            '(set-top-level-value! \'*meta-quiet* #t) '
+            '(load "boundary/pipeline/rlm2-drive.ss") '
+            f'(set! *rlm2-progress-file* "{progress_file}") '
+            f'(let* ([provider (make-rlm-provider '
+            f'  "{esc(endpoint)}" '
+            f'  "{esc(model)}" '
+            f'  {api_key_scheme} '
+            f"  'openai)] "
+            f' [config (make-rlm2-config provider "{esc(self._LIBRARIAN_SYSTEM_PROMPT)}" '
+            f'  {max_steps} {max_fuel} 2000 2 3 8000 #f {max_tokens})]) '
+            f'  (rlm2-run config "{esc(query)}" "{esc(seed)}")))'
+        )
+
+        session = f"myxo-{name.lower()}-{run_id}"
+        logger.info(f"Librarian run starting (max {max_steps} steps, {lib_timeout}s timeout, session={session}): {query[:80]}")
+
+        # Run evaluation in background, poll progress file for live updates
+        loop = asyncio.get_event_loop()
+        eval_future = loop.run_in_executor(
+            None, fold_evaluate_long, expr, session, lib_timeout)
+
+        seen_lines = 0
+        while not eval_future.done():
+            await asyncio.sleep(1.5)
+            try:
+                with open(progress_file) as f:
+                    lines = f.readlines()
+                new_lines = lines[seen_lines:]
+                if new_lines:
+                    for line in new_lines:
+                        parts = line.strip().split("\t", 3)
+                        if len(parts) >= 4:
+                            step_entry = {
+                                "step": int(parts[0]),
+                                "action": parts[1],
+                                "ok": parts[2] == "ok",
+                                "note": parts[3],
+                            }
+                            run_data["steps"].append(step_entry)
+                    seen_lines = len(lines)
+                    await self._broadcast({
+                        "event": "rlm",
+                        "data": {**run_data},
+                    })
+            except (FileNotFoundError, ValueError):
+                pass
+
+        result = eval_future.result()
+
+        # Strip Fold boot noise
+        marker = "\n=> "
+        idx = result.rfind(marker)
+        if idx >= 0:
+            result = result[idx + len(marker):]
+
+        # Read any remaining progress lines
+        try:
+            with open(progress_file) as f:
+                lines = f.readlines()
+            for line in lines[seen_lines:]:
+                parts = line.strip().split("\t", 3)
+                if len(parts) >= 4:
+                    run_data["steps"].append({
+                        "step": int(parts[0]),
+                        "action": parts[1],
+                        "ok": parts[2] == "ok",
+                        "note": parts[3],
+                    })
+            os.unlink(progress_file)
+        except (FileNotFoundError, ValueError):
+            pass
+
+        # Parse and broadcast completion
+        rlm_status, rlm_output = self._parse_rlm_result(result)
+        run_data["status"] = rlm_status
+        run_data["output"] = rlm_output[:500]
+
+        await self._broadcast({
+            "event": "rlm",
+            "data": {**run_data},
+        })
+
+        if not result.startswith("Error:"):
+            self._record_fold_artifact(f"(librarian: {query[:200]})", result)
+
+        logger.info(f"Librarian run complete ({rlm_status}): {len(result)} chars, {len(run_data['steps'])} steps")
+
+        if rlm_status == "completed":
+            return f"[Librarian] {rlm_output}"
+        elif rlm_status == "exhausted":
+            return f"[Librarian — hit step limit] {rlm_output}"
+        elif rlm_status == "error":
+            return f"[Librarian error] {rlm_output}"
+        return f"[Librarian {rlm_status}] {rlm_output}"
+
     async def _synthesize_journal(self):
         """Synthesize recent cycle metadata into an expressive journal entry."""
         logger.info(f"Journal synthesis check: {len(self._journal_tags)} tags, cycle counter={self._cycles_since_journal}")
@@ -835,6 +1007,10 @@ class Brain:
             task = tool_args.get("task", "")
             detail = task[:60] + ("..." if len(task) > 60 else "")
             return {"type": "deep_exploration", "detail": f"Deep dive: {detail}"}
+        if tool_name == "ask_librarian":
+            query = tool_args.get("query", "")
+            detail = query[:60] + ("..." if len(query) > 60 else "")
+            return {"type": "consulting_librarian", "detail": f"Librarian: {detail}"}
         if tool_name == "fold":
             expr = tool_args.get("expression", "")
             detail = expr[:60] + ("..." if len(expr) > 60 else "")
@@ -1180,6 +1356,8 @@ class Brain:
                         result = await self._handle_bbs(tool_args)
                     elif tool_name == "rlm":
                         result = await self._handle_rlm(tool_args)
+                    elif tool_name == "ask_librarian":
+                        result = await self._handle_ask_librarian(tool_args)
                     elif tool_name == "fold":
                         session = f"myxo-{self.identity['name'].lower()}"
                         result = await asyncio.to_thread(
