@@ -124,6 +124,25 @@ def check_session_fresh(session_id: str) -> bool:
     return current != prev
 
 
+def kill_daemon() -> bool:
+    """Kill the Fold daemon. Returns True if a daemon was killed.
+
+    Used by the circuit breaker when a worker is stuck — killing the daemon
+    also kills all workers. _ensure_daemon() will restart it on the next call.
+    """
+    pid_file = os.path.join(REPL_DIR, "daemon.pid")
+    try:
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 15)  # SIGTERM
+        logger.warning(f"Circuit breaker: killed Fold daemon (PID {pid})")
+        # Clear cached generation so check_session_fresh() detects the restart
+        _daemon_generation.clear()
+        return True
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        return False
+
+
 def _evaluate_impl(expression: str, session_id: str, timeout: float,
                     max_result_length: int, max_response_bytes: int,
                     timeout_label: str = "timed out") -> str:

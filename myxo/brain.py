@@ -11,7 +11,7 @@ from datetime import datetime, date
 from myxo.config import config
 from myxo.memory import MemoryStream
 from myxo.prompts import main_system_prompt, pick_mood, REFLECTION_PROMPT, PLANNING_PROMPT, FOCUS_NUDGE, JOURNAL_PROMPT
-from myxo.fold_client import evaluate as fold_evaluate, evaluate_long as fold_evaluate_long, check_session_fresh
+from myxo.fold_client import evaluate as fold_evaluate, evaluate_long as fold_evaluate_long, check_session_fresh, kill_daemon as fold_kill_daemon
 
 ARTIFACTS_FILENAME = "fold_artifacts.jsonl"
 
@@ -140,6 +140,9 @@ class Brain:
     # Tool loop circuit breaker — max tool calls per think cycle
     MAX_TOOL_CALLS = 20
 
+    # Fold session circuit breaker — kill daemon after this many consecutive timeouts
+    FOLD_TIMEOUT_THRESHOLD = 3
+
     def __init__(self, identity: dict, env_path: str, provider=None, creature_config: dict = None):
         self.identity = identity
         self.env_path = env_path
@@ -182,6 +185,7 @@ class Brain:
 
         # Fold session tracking
         self._fold_session_warned: bool = False  # only warn once per run about reset
+        self._fold_consecutive_timeouts: int = 0  # circuit breaker for zombie workers
 
         # Mood persistence — pick once, stick for several cycles
         self._current_mood: dict | None = None
@@ -1155,6 +1159,25 @@ class Brain:
                         result = await asyncio.to_thread(
                             fold_evaluate, tool_args.get("expression", ""), session
                         )
+                        # Circuit breaker: consecutive timeouts → kill daemon
+                        if "timed out" in result:
+                            self._fold_consecutive_timeouts += 1
+                            if self._fold_consecutive_timeouts >= Brain.FOLD_TIMEOUT_THRESHOLD:
+                                logger.warning(
+                                    f"Fold circuit breaker tripped after "
+                                    f"{self._fold_consecutive_timeouts} consecutive timeouts — "
+                                    f"killing daemon to clear zombie worker"
+                                )
+                                await asyncio.to_thread(fold_kill_daemon)
+                                self._fold_consecutive_timeouts = 0
+                                self._fold_session_warned = False
+                                result += (
+                                    "\n\n(CIRCUIT BREAKER: The Fold worker was stuck. "
+                                    "The daemon has been restarted. Your session was reset — "
+                                    "re-require any modules you need.)"
+                                )
+                        else:
+                            self._fold_consecutive_timeouts = 0
                         # Detect daemon restart (session state wiped)
                         if not self._fold_session_warned and check_session_fresh(session):
                             result = (
