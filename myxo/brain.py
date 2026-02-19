@@ -468,27 +468,44 @@ class Brain:
         })
 
         # Build the provider config for the Fold-side RLM
-        api_key = self.creature_config.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
+        # make-rlm-provider signature: (endpoint model-id api-key-env api-format)
+        #   - endpoint: full URL including /chat/completions
+        #   - api-key-env: name of env var in .env.agents (NOT the key itself)
+        #   - api-format: 'openai or 'anthropic
         model = self.creature_config.get("rlm_model") or self.creature_config.get("model", "moonshotai/kimi-k2.5")
         base_url = self.creature_config.get("base_url", "https://openrouter.ai/api/v1")
+        endpoint = base_url.rstrip("/") + "/chat/completions"
 
         esc = self._scheme_escape
-        input_clause = f' "input" "{esc(seed_input)}"' if seed_input else ""
+        seed_escaped = esc(seed_input) if seed_input else ""
+
+        # Build explicit config: 8 steps max (reasoning models ~25s/step → ~200s)
+        # make-rlm2-config: provider sys-prompt max-steps max-fuel chunk-size
+        #                    max-depth loop-window context-budget verifier
+        max_steps = self.creature_config.get("rlm_max_steps", 8)
+        rlm_timeout = 45 * max_steps  # ~45s per step headroom
 
         expr = (
             '(begin '
             '(load "boundary/pipeline/rlm2-drive.ss") '
-            f'(let ([provider (make-rlm-provider '
-            f'  "base-url" "{esc(base_url)}" '
-            f'  "api-key" "{esc(api_key)}" '
-            f'  "model" "{esc(model)}")]) '
-            f'  (rlm2-run provider "{esc(task)}"{input_clause})))'
+            f'(let* ([provider (make-rlm-provider '
+            f'  "{esc(endpoint)}" '
+            f'  "{esc(model)}" '
+            f'  "OPENAI_API_KEY" '
+            f"  'openai)] "
+            f' [config (make-rlm2-config provider "" '
+            f'  {max_steps} 50000 2000 2 3 8000 #f)]) '
+            f'  (rlm2-run config "{esc(task)}" "{seed_escaped}")))'
         )
 
-        session = f"myxo-{name.lower()}-rlm"
-        logger.info(f"RLM run starting: {task[:80]}")
+        # Use unique session per RLM run — if a previous run timed out from
+        # Python's side, the Fold worker doesn't know and keeps executing.
+        # Reusing the session would queue behind the zombie evaluation.
+        import time as _time
+        session = f"myxo-{name.lower()}-rlm-{int(_time.time())}"
+        logger.info(f"RLM run starting (max {max_steps} steps, {rlm_timeout}s timeout, session={session}): {task[:80]}")
 
-        result = await asyncio.to_thread(fold_evaluate_long, expr, session)
+        result = await asyncio.to_thread(fold_evaluate_long, expr, session, timeout=rlm_timeout)
 
         # Record as artifact on success
         if not result.startswith("Error:"):
@@ -977,6 +994,15 @@ class Brain:
                 tool_args = tc["arguments"]
                 call_id = tc["call_id"]
                 tool_call_count += 1
+
+                # Cap check inside batch — skip execution for remaining
+                # tool calls but still provide results so the protocol stays valid
+                if tool_call_count > Brain.MAX_TOOL_CALLS:
+                    result = f"(Skipped — tool loop cap of {Brain.MAX_TOOL_CALLS} reached)"
+                    result_for_input = result
+                    loop_log.append((tool_name, "", result[:150]))
+                    input_list.append(self.provider.make_tool_result(call_id, result_for_input))
+                    continue
 
                 await self._emit("tool_call", tool=tool_name, args=tool_args)
 
