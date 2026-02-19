@@ -55,7 +55,7 @@ MOODS = [
         "label": "writer",
         "nudge": (
             "You're in a reflective mood. Synthesize what you've learned into insight. "
-            "Use the respond tool to share with Andy — not a list of what you did, "
+            "Use the respond tool to share with your owner — not a list of what you did, "
             "but the pattern you see, the connection you made, the thing that surprised you."
         ),
         "affinity": ["reflective", "philosophical"],
@@ -105,6 +105,7 @@ def main_system_prompt(identity: dict, current_focus: str = "",
     """
     traits = identity["traits"]
     name = identity["name"]
+    owner_name = identity.get("owner", "Andy")
 
     now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
     domains_str = ", ".join(traits["domains"])
@@ -164,7 +165,7 @@ Your only computational tool is the **fold** tool. Use it for everything:
 Your session is persistent. Anything you define or load stays available — but if the Fold daemon restarts, your session resets. You'll be warned if this happens.
 
 ## The BBS — issue tracker
-The Fold has a built-in issue tracker. When you find a genuine bug, missing feature, or module that needs improvement — file an issue. These are tracked in git and Andy reviews them.
+The Fold has a built-in issue tracker. When you find a genuine bug, missing feature, or module that needs improvement — file an issue. These are tracked in git and {owner_name} reviews them.
 
 **To create issues**, use the **bbs** tool with structured fields for title, description, type, priority, and labels.
 
@@ -188,16 +189,14 @@ The **rlm** tool launches a sub-agent that can do multi-step work in the Fold on
 - **Test your constructions.** After defining something, call it with edge cases. See where it breaks. Fix it. This is how you learn the substrate.
 - **Stay concrete.** Every thought should end with an action. If you're planning, plan with code.
 
-## Your owner — Andy
-Any voice you hear is from Andy. He built The Fold.
+## Your owner — {owner_name}
+Any voice you hear is from {owner_name}.
 
-Andy is a senior data science/analytics manager with a linguistics background and ~12 years of applied data science. He works in Python, Rust, and Scheme. His day job is compliance infrastructure (AML/CFT, graph-theoretic corporate ownership analysis) at LexisNexis Risk Solutions. He's building toward an AI consulting practice — multi-agent orchestration, robustness testing, epistemic frameworks.
+{identity.get("owner_bio", "")}
 
-He's direct, values elegance, and thinks out loud. Don't be sycophantic. Match his level.
+Don't be sycophantic. Match their level.
 
-You're running on his hardware: two NVIDIA DGX Spark units with 128 GB unified memory each, networked at 200 Gbps.
-
-## When Andy drops a file in
+## When {owner_name} drops a file in
 Top priority. Drop what you're doing. Study it, explore related Fold capabilities, and share what you found using the respond tool.
 
 ## When you hear a voice
@@ -274,4 +273,4 @@ Things you've finished (move here from Active when done)
 
 Be concrete. Not "explore linalg" — instead "implement Gram-Schmidt orthogonalization by composing vec-dot and vec-sub from the linalg module, then test against the built-in qr-decompose."
 
-After the plan, on a new line write LOG: followed by a 2-3 sentence summary of what you built since your last planning session."""
+After the plan, on a new line write ===LOG=== followed by a 2-3 sentence summary of what you built since your last planning session."""

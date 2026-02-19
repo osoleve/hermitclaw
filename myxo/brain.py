@@ -318,6 +318,9 @@ class Brain:
             **data,
         }
         self.events.append(entry)
+        # Cap in-memory events to prevent unbounded growth
+        if len(self.events) > 500:
+            self.events = self.events[-500:]
         await self._broadcast({"event": "entry", "data": entry})
         text = data.get("text", data.get("command", data.get("content", "")))
         logger.info(f"[{event_type}] {str(text)[:120]}")
@@ -775,13 +778,15 @@ class Brain:
                     entry["content"] = "(could not read PDF)"
             elif ext in Brain._TEXT_EXTS:
                 try:
-                    text = open(fpath, "r", errors="replace").read()
+                    with open(fpath, "r", errors="replace") as f:
+                        text = f.read()
                     entry["content"] = text[:2000]
                 except Exception:
                     entry["content"] = "(could not read file)"
             elif ext in Brain._IMAGE_EXTS:
                 try:
-                    data = open(fpath, "rb").read()
+                    with open(fpath, "rb") as f:
+                        data = f.read()
                     mime = "image/png" if ext == ".png" else "image/jpeg" if ext in (".jpg", ".jpeg") else "image/gif" if ext == ".gif" else "image/webp"
                     entry["image"] = f"data:{mime};base64,{base64.b64encode(data).decode()}"
                 except Exception:
@@ -1081,12 +1086,12 @@ class Brain:
 
         try:
             response = await asyncio.to_thread(
-                self.provider.chat, input_list, True, instructions
+                self.provider.chat, input_list, True, instructions, 800
             )
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             await self._emit("error", text=str(e))
-            return
+            return False
 
         await self._emit_api_call(instructions, input_list, response)
 
@@ -1196,6 +1201,12 @@ class Brain:
                     if is_error:
                         self._persistent_errors[expr_key] = self._persistent_errors.get(expr_key, 0) + 1
                         count = self._persistent_errors[expr_key]
+                        # Prune old entries to prevent unbounded growth
+                        if len(self._persistent_errors) > 50:
+                            self._persistent_errors = dict(
+                                sorted(self._persistent_errors.items(),
+                                       key=lambda x: x[1], reverse=True)[:25]
+                            )
                         if count >= 3:
                             result += (
                                 f"\n\nWARNING: You've tried this exact expression {count} times "
@@ -1262,7 +1273,7 @@ class Brain:
                 })
                 try:
                     response = await asyncio.to_thread(
-                        self.provider.chat, input_list, False, instructions
+                        self.provider.chat, input_list, False, instructions, 800
                     )
                 except Exception as e:
                     logger.error(f"LLM cap-off call failed: {e}")
@@ -1272,7 +1283,7 @@ class Brain:
 
             try:
                 response = await asyncio.to_thread(
-                    self.provider.chat, input_list, True, instructions
+                    self.provider.chat, input_list, True, instructions, 800
                 )
             except Exception as e:
                 logger.error(f"LLM follow-up call failed: {e}")
@@ -1398,13 +1409,14 @@ class Brain:
         if not plan_text:
             return
 
-        # Split plan from log entry (separated by "LOG:")
+        # Split plan from log entry (separated by "===LOG===")
         plan_body = plan_text
         log_entry = ""
-        if "LOG:" in plan_text:
-            idx = plan_text.index("LOG:")
+        log_sep = "===LOG==="
+        if log_sep in plan_text:
+            idx = plan_text.index(log_sep)
             plan_body = plan_text[:idx].strip()
-            log_entry = plan_text[idx + 4:].strip()
+            log_entry = plan_text[idx + len(log_sep):].strip()
 
         # Write projects.md
         env_root = self.env_path
@@ -1508,3 +1520,5 @@ class Brain:
     def stop(self):
         self.running = False
         self.state = "idle"
+        if hasattr(self, "_wake_event"):
+            self._wake_event.set()

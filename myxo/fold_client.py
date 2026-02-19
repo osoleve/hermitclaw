@@ -124,8 +124,10 @@ def check_session_fresh(session_id: str) -> bool:
     return current != prev
 
 
-def evaluate(expression: str, session_id: str, timeout: float = 30.0) -> str:
-    """Evaluate a Scheme expression via the Fold daemon. Returns result string."""
+def _evaluate_impl(expression: str, session_id: str, timeout: float,
+                    max_result_length: int, max_response_bytes: int,
+                    timeout_label: str = "timed out") -> str:
+    """Shared implementation for evaluate() and evaluate_long()."""
     sock_path = _ensure_daemon()
     if not sock_path:
         return "Error: Fold daemon is not running and could not be started."
@@ -144,31 +146,37 @@ def evaluate(expression: str, session_id: str, timeout: float = 30.0) -> str:
 
         length_bytes = _recv_exact(s, 4)
         length = struct.unpack(">I", length_bytes)[0]
-        if length > 16 * 1024 * 1024:
+        if length > max_response_bytes:
             return f"Error: response too large ({length} bytes)"
 
         payload = _recv_exact(s, length)
         resp = _parse_response(payload.decode("utf-8"))
 
         if resp["status"] == "success":
-            # Track daemon generation for restart detection
             _daemon_generation[session_id] = _daemon_pid_mtime()
 
             result = resp.get("result", "(no result)")
-            if len(result) > MAX_RESULT_LENGTH:
-                result = result[:MAX_RESULT_LENGTH] + f"\n(truncated — {len(result)} chars total)"
+            if len(result) > max_result_length:
+                result = result[:max_result_length] + f"\n(truncated — {len(result)} chars total)"
             return result
         else:
             return f"Error: {resp.get('error', 'unknown')}"
 
     except socket.timeout:
-        return f"Error: timed out after {timeout}s"
+        return f"Error: {timeout_label} after {timeout}s"
     except ConnectionRefusedError:
         return "Error: Fold daemon refused connection."
     except Exception as e:
         return f"Error: {e}"
     finally:
         s.close()
+
+
+def evaluate(expression: str, session_id: str, timeout: float = 30.0) -> str:
+    """Evaluate a Scheme expression via the Fold daemon. Returns result string."""
+    return _evaluate_impl(expression, session_id, timeout,
+                          MAX_RESULT_LENGTH, 16 * 1024 * 1024,
+                          "timed out")
 
 
 def evaluate_long(expression: str, session_id: str, timeout: float = 300.0) -> str:
@@ -179,45 +187,6 @@ def evaluate_long(expression: str, session_id: str, timeout: float = 300.0) -> s
     - 8000 char result truncation (vs 2000)
     - 64MB response cap (vs 16MB)
     """
-    sock_path = _ensure_daemon()
-    if not sock_path:
-        return "Error: Fold daemon is not running and could not be started."
-
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    try:
-        s.connect(sock_path)
-
-        req_id = uuid.uuid4().hex[:8]
-        escaped = expression.replace('\\', '\\\\').replace('"', '\\"')
-        msg = f'((type . request) (id . "{req_id}") (session . "{session_id}") (expr . "{escaped}"))'
-        data = msg.encode("utf-8")
-
-        s.sendall(struct.pack(">I", len(data)) + data)
-
-        length_bytes = _recv_exact(s, 4)
-        length = struct.unpack(">I", length_bytes)[0]
-        if length > 64 * 1024 * 1024:
-            return f"Error: response too large ({length} bytes)"
-
-        payload = _recv_exact(s, length)
-        resp = _parse_response(payload.decode("utf-8"))
-
-        if resp["status"] == "success":
-            _daemon_generation[session_id] = _daemon_pid_mtime()
-
-            result = resp.get("result", "(no result)")
-            if len(result) > MAX_RESULT_LENGTH_LONG:
-                result = result[:MAX_RESULT_LENGTH_LONG] + f"\n(truncated — {len(result)} chars total)"
-            return result
-        else:
-            return f"Error: {resp.get('error', 'unknown')}"
-
-    except socket.timeout:
-        return f"Error: RLM run timed out after {timeout}s"
-    except ConnectionRefusedError:
-        return "Error: Fold daemon refused connection."
-    except Exception as e:
-        return f"Error: {e}"
-    finally:
-        s.close()
+    return _evaluate_impl(expression, session_id, timeout,
+                          MAX_RESULT_LENGTH_LONG, 64 * 1024 * 1024,
+                          "RLM run timed out")

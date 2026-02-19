@@ -183,9 +183,13 @@ class OpenAIProvider(Provider):
         self.api_key = api_key
         self.model = model
         self.embedding_model = embedding_model
+        self._chat_client = openai.OpenAI(api_key=api_key, timeout=120)
+        self._embed_client = openai.OpenAI(api_key=api_key, timeout=30)
 
     def _client(self, timeout: float = 120) -> openai.OpenAI:
-        return openai.OpenAI(api_key=self.api_key, timeout=timeout)
+        if timeout <= 30:
+            return self._embed_client
+        return self._chat_client
 
     def _tools(self):
         return [{"type": "function", **t} for t in _FUNCTION_TOOLS]
@@ -211,9 +215,14 @@ class OpenAIProvider(Provider):
                     if hasattr(content, "text"):
                         text_parts.append(content.text)
             elif item.type == "function_call":
+                try:
+                    parsed_args = json.loads(item.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Malformed tool call arguments for {item.name}: {item.arguments[:100]}")
+                    parsed_args = {"_raw": item.arguments}
                 tool_calls.append({
                     "name": item.name,
-                    "arguments": json.loads(item.arguments),
+                    "arguments": parsed_args,
                     "call_id": item.call_id,
                 })
 
@@ -250,9 +259,10 @@ class LocalProvider(Provider):
         self.embedding_api_key = embedding_api_key
         self.embedding_model = embedding_model
         self.embedding_base_url = embedding_base_url
+        self._chat_client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=120)
 
     def _client(self, timeout: float = 120) -> openai.OpenAI:
-        return openai.OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=timeout)
+        return self._chat_client
 
     def _tools(self):
         """Chat Completions format for tool definitions."""

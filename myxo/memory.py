@@ -66,7 +66,14 @@ class MemoryStream:
 
         if self.memories:
             # Restore next ID from highest existing ID
-            max_id = max(int(m["id"].split("_")[1]) for m in self.memories)
+            max_id = 0
+            for m in self.memories:
+                try:
+                    mid = int(m["id"].split("_")[1])
+                    if mid > max_id:
+                        max_id = mid
+                except (IndexError, ValueError, KeyError):
+                    logger.warning(f"Skipping memory with malformed ID: {m.get('id', '?')}")
             self._next_id = max_id + 1
 
         # Restore persisted state (importance_sum, etc.)

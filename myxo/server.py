@@ -10,9 +10,11 @@ import traceback
 
 from datetime import datetime
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from myxo.brain import Brain
@@ -22,8 +24,26 @@ from myxo.provider import create_provider
 
 logger = logging.getLogger("myxo.server")
 
-app = FastAPI(title="Myxo")
 brains: dict[str, Brain] = {}  # creature_id -> Brain
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start brain coroutines on startup, stop them on shutdown."""
+    async def _start_brains():
+        # Small delay so the server finishes binding the port first
+        await asyncio.sleep(0.5)
+        for creature_id, brain in brains.items():
+            asyncio.create_task(_supervise_brain(creature_id, brain))
+            logger.info(f"{brain.identity['name']} ({creature_id}) starting...")
+    asyncio.create_task(_start_brains())
+    yield
+    # Shutdown: stop all brains
+    for brain in brains.values():
+        brain.stop()
+
+
+app = FastAPI(title="Myxo", lifespan=lifespan)
 
 
 def create_app(all_brains: dict[str, Brain]) -> FastAPI:
@@ -92,12 +112,17 @@ async def _supervise_brain(creature_id: str, brain: Brain):
             backoff = min(backoff * 2, max_backoff)
 
 
-def _get_brain(request: Request) -> Brain:
+def _get_brain(request: Request) -> Brain | None:
     """Look up brain by ?creature=ID query param, or default to first."""
     creature_id = request.query_params.get("creature")
     if creature_id and creature_id in brains:
         return brains[creature_id]
-    return next(iter(brains.values()))
+    if brains:
+        return next(iter(brains.values()))
+    return None
+
+
+_NO_CREATURE = JSONResponse({"error": "no creatures running"}, status_code=404)
 
 
 # CORS for development (Vite dev server)
@@ -211,22 +236,30 @@ async def create_creature(request: Request):
 async def get_identity(request: Request):
     """Get the creature's identity."""
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     return brain.identity
 
 @app.get("/api/events")
 async def get_events(request: Request, limit: int = 100):
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     return brain.events[-limit:]
 
 @app.get("/api/raw")
 async def get_raw(request: Request, limit: int = 20):
     """Get raw API call history."""
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     return brain.api_calls[-limit:]
 
 @app.get("/api/status")
 async def get_status(request: Request):
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     return {
         "state": brain.state,
         "thought_count": brain.thought_count,
@@ -243,6 +276,8 @@ async def get_status(request: Request):
 async def post_focus_mode(request: Request):
     """Toggle focus mode on or off."""
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     body = await request.json()
     enabled = bool(body.get("enabled", False))
     await brain.set_focus_mode(enabled)
@@ -252,6 +287,8 @@ async def post_focus_mode(request: Request):
 async def post_message(request: Request):
     """Receive a message from the user (voice from outside the room)."""
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     body = await request.json()
     text = body.get("text", "").strip()
     if not text:
@@ -266,6 +303,8 @@ async def post_message(request: Request):
 async def post_snapshot(request: Request):
     """Receive a canvas snapshot from the frontend."""
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     body = await request.json()
     brain.latest_snapshot = body.get("image")
     return {"ok": True}
@@ -274,6 +313,8 @@ async def post_snapshot(request: Request):
 async def get_bbs(request: Request):
     """Get BBS issues filed by a creature this run."""
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     return brain._bbs_issues
 
 
@@ -288,6 +329,8 @@ async def get_rlm(request: Request):
 async def get_journal(request: Request):
     """Get today's journal entries."""
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     from datetime import date
     date_str = date.today().isoformat()
     journal_path = os.path.join(brain.env_path, "journal", f"{date_str}.md")
@@ -303,6 +346,8 @@ async def get_journal(request: Request):
 async def get_journal_by_date(request: Request, date_str: str):
     """Get journal entries for a specific date."""
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     journal_path = os.path.join(brain.env_path, "journal", f"{date_str}.md")
     try:
         with open(journal_path, "r") as f:
@@ -315,6 +360,8 @@ async def get_journal_by_date(request: Request, date_str: str):
 @app.get("/api/files")
 async def get_files(request: Request):
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     env_root = os.path.realpath(brain.env_path)
     files = []
     for dirpath, _, filenames in os.walk(env_root):
@@ -329,9 +376,11 @@ async def get_files(request: Request):
 @app.get("/api/files/{path:path}")
 async def get_file(request: Request, path: str):
     brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
     env_root = os.path.realpath(brain.env_path)
     full = os.path.realpath(os.path.join(env_root, path))
-    if not full.startswith(env_root):
+    if not full.startswith(env_root + os.sep) and full != env_root:
         return {"path": path, "content": "Blocked: path outside environment."}
     try:
         with open(full, "r") as f:
@@ -352,16 +401,3 @@ if os.path.isdir(frontend_dist):
         if os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(frontend_dist, "index.html"))
-
-
-# --- Startup ---
-
-@app.on_event("startup")
-async def startup():
-    async def _start_brains():
-        # Small delay so the server finishes binding the port first
-        await asyncio.sleep(0.5)
-        for creature_id, brain in brains.items():
-            asyncio.create_task(_supervise_brain(creature_id, brain))
-            logger.info(f"{brain.identity['name']} ({creature_id}) starting...")
-    asyncio.create_task(_start_brains())
