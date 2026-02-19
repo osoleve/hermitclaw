@@ -466,10 +466,11 @@ class Brain:
             return "error", result
 
         prefix = "(rlm2-run-result "
-        if not result.startswith(prefix):
+        idx = result.find(prefix)
+        if idx < 0:
             return "unknown", result[:300]
 
-        rest = result[len(prefix):]
+        rest = result[idx + len(prefix):]
         # Extract status word (completed, exhausted, etc.)
         space_idx = rest.find(" ")
         if space_idx < 0:
@@ -635,7 +636,7 @@ class Brain:
             return f"[RLM exhausted — hit step limit] {rlm_output}"
         elif rlm_status == "error":
             return f"[RLM error] {rlm_output}"
-        return result
+        return f"[RLM {rlm_status}] {rlm_output}"
 
     async def _synthesize_journal(self):
         """Synthesize recent cycle metadata into an expressive journal entry."""
