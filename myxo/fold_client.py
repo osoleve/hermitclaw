@@ -143,6 +143,9 @@ def kill_daemon() -> bool:
         return False
 
 
+CONNECT_TIMEOUT = 5.0  # seconds — connection to daemon should be near-instant
+
+
 def _evaluate_impl(expression: str, session_id: str, timeout: float,
                     max_result_length: int, max_response_bytes: int,
                     timeout_label: str = "timed out") -> str:
@@ -152,9 +155,15 @@ def _evaluate_impl(expression: str, session_id: str, timeout: float,
         return "Error: Fold daemon is not running and could not be started."
 
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout)
     try:
-        s.connect(sock_path)
+        # Phase 1: Connect — short timeout, failure here is transient/infra
+        s.settimeout(CONNECT_TIMEOUT)
+        try:
+            s.connect(sock_path)
+        except socket.timeout:
+            return "Error: connect timed out (daemon may be overloaded)"
+        except ConnectionRefusedError:
+            return "Error: Fold daemon refused connection."
 
         req_id = uuid.uuid4().hex[:8]
         escaped = expression.replace('\\', '\\\\').replace('"', '\\"')
@@ -163,6 +172,8 @@ def _evaluate_impl(expression: str, session_id: str, timeout: float,
 
         s.sendall(struct.pack(">I", len(data)) + data)
 
+        # Phase 2: Evaluation — use the caller's timeout for actual computation
+        s.settimeout(timeout)
         length_bytes = _recv_exact(s, 4)
         length = struct.unpack(">I", length_bytes)[0]
         if length > max_response_bytes:
@@ -182,9 +193,7 @@ def _evaluate_impl(expression: str, session_id: str, timeout: float,
             return f"Error: {resp.get('error', 'unknown')}"
 
     except socket.timeout:
-        return f"Error: {timeout_label} after {timeout}s"
-    except ConnectionRefusedError:
-        return "Error: Fold daemon refused connection."
+        return f"Error: eval {timeout_label} after {timeout}s"
     except Exception as e:
         return f"Error: {e}"
     finally:

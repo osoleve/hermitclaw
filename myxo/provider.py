@@ -217,9 +217,9 @@ class OpenAIProvider(Provider):
             elif item.type == "function_call":
                 try:
                     parsed_args = json.loads(item.arguments)
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Malformed tool call arguments for {item.name}: {item.arguments[:100]}")
-                    parsed_args = {"_raw": item.arguments}
+                except (json.JSONDecodeError, TypeError) as exc:
+                    logger.warning(f"Malformed tool call arguments for {item.name}: {item.arguments[:200]}")
+                    parsed_args = {"_raw": item.arguments[:300], "_error": str(exc)}
                 tool_calls.append({
                     "name": item.name,
                     "arguments": parsed_args,
@@ -384,9 +384,9 @@ class LocalProvider(Provider):
             for tc in msg.tool_calls:
                 try:
                     parsed_args = json.loads(tc.function.arguments)
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Malformed tool call arguments for {tc.function.name}: {tc.function.arguments[:100]}")
-                    parsed_args = {"_raw": tc.function.arguments}
+                except (json.JSONDecodeError, TypeError) as exc:
+                    logger.warning(f"Malformed tool call arguments for {tc.function.name}: {tc.function.arguments[:200]}")
+                    parsed_args = {"_raw": tc.function.arguments[:300], "_error": str(exc)}
                 tool_calls.append({
                     "name": tc.function.name,
                     "arguments": parsed_args,

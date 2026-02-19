@@ -60,11 +60,13 @@ def _serialize_output(output) -> list:
             if item.type == "message":
                 content_parts = []
                 for c in item.content:
-                    if hasattr(c, "text"):
+                    if hasattr(c, "text") and c.text:
                         content_parts.append({"type": "text", "text": c.text})
-                    else:
+                    elif not hasattr(c, "text"):
                         content_parts.append({"type": getattr(c, "type", "unknown")})
-                items.append({"type": "message", "content": content_parts})
+                # Skip messages with no actual text content
+                if content_parts:
+                    items.append({"type": "message", "content": content_parts})
             elif item.type == "function_call":
                 items.append({
                     "type": "function_call",
@@ -346,13 +348,23 @@ class Brain:
         await self._broadcast({"event": "api_call", "data": entry})
 
         # Append to log file (project root, outside environment)
-        # Strip base64 images to keep the log manageable
-        try:
-            log_entry = self._strip_images_for_log(entry)
-            with open(LOG_PATH, "a") as f:
-                f.write(json.dumps(log_entry) + "\n")
-        except Exception:
-            pass
+        # Skip entries with no text content (tool-only responses) to avoid log bloat
+        has_text = any(
+            isinstance(item, dict)
+            and item.get("type") == "message"
+            and any(
+                isinstance(p, dict) and p.get("text")
+                for p in (item.get("content") or [])
+            )
+            for item in entry.get("output", [])
+        )
+        if has_text:
+            try:
+                log_entry = self._strip_images_for_log(entry)
+                with open(LOG_PATH, "a") as f:
+                    f.write(json.dumps(log_entry) + "\n")
+            except Exception:
+                pass
 
     # --- Movement ---
 
@@ -1125,17 +1137,17 @@ class Brain:
                 tool_name = tc["name"].strip()
                 tool_args = tc["arguments"]
                 call_id = tc["call_id"]
-                tool_call_count += 1
 
-                # Cap check inside batch — skip execution for remaining
-                # tool calls but still provide results so the protocol stays valid
-                if tool_call_count > Brain.MAX_TOOL_CALLS:
+                # Cap check BEFORE execution — skip this call and all remaining
+                # but still provide results so the protocol stays valid
+                if tool_call_count >= Brain.MAX_TOOL_CALLS:
                     result = f"(Skipped — tool loop cap of {Brain.MAX_TOOL_CALLS} reached)"
                     result_for_input = result
                     loop_log.append((tool_name, "", result[:150]))
                     input_list.append(self.provider.make_tool_result(call_id, result_for_input))
                     continue
 
+                tool_call_count += 1
                 await self._emit("tool_call", tool=tool_name, args=tool_args)
 
                 # Broadcast activity for frontend visualization
@@ -1143,9 +1155,15 @@ class Brain:
                 await self._broadcast({"event": "activity", "data": activity})
 
                 try:
-                    # Skip malformed tool calls gracefully
+                    # Skip malformed tool calls gracefully — show what went wrong
                     if "_raw" in tool_args:
-                        result = f"Error: malformed tool call — could not parse arguments. Try again with valid JSON."
+                        raw_preview = tool_args["_raw"][:150]
+                        parse_err = tool_args.get("_error", "unknown")
+                        result = (
+                            f"Error: malformed tool call — JSON parse failed: {parse_err}\n"
+                            f"Raw arguments: {raw_preview}\n"
+                            f"Fix the JSON and try again."
+                        )
                     elif tool_name == "move":
                         result = await self._handle_move(tool_args)
                     elif tool_name == "respond":
@@ -1159,13 +1177,15 @@ class Brain:
                         result = await asyncio.to_thread(
                             fold_evaluate, tool_args.get("expression", ""), session
                         )
-                        # Circuit breaker: consecutive timeouts → kill daemon
-                        if "timed out" in result:
+                        # Circuit breaker: consecutive eval timeouts → kill daemon
+                        # Only count evaluation timeouts (worker hung), not connection
+                        # timeouts (transient infra issue).
+                        if "eval timed out" in result or "eval RLM run timed out" in result:
                             self._fold_consecutive_timeouts += 1
                             if self._fold_consecutive_timeouts >= Brain.FOLD_TIMEOUT_THRESHOLD:
                                 logger.warning(
                                     f"Fold circuit breaker tripped after "
-                                    f"{self._fold_consecutive_timeouts} consecutive timeouts — "
+                                    f"{self._fold_consecutive_timeouts} consecutive eval timeouts — "
                                     f"killing daemon to clear zombie worker"
                                 )
                                 await asyncio.to_thread(fold_kill_daemon)
@@ -1176,6 +1196,10 @@ class Brain:
                                     "The daemon has been restarted. Your session was reset — "
                                     "re-require any modules you need.)"
                                 )
+                        elif "connect timed out" in result:
+                            # Connection failures are transient — don't count
+                            # toward circuit breaker, but log for visibility
+                            logger.info("Fold connect timeout (transient, not counting toward breaker)")
                         else:
                             self._fold_consecutive_timeouts = 0
                         # Detect daemon restart (session state wiped)
@@ -1229,7 +1253,7 @@ class Brain:
                                 sorted(self._persistent_errors.items(),
                                        key=lambda x: x[1], reverse=True)[:25]
                             )
-                        if count >= 3:
+                        if count >= 2:
                             result += (
                                 f"\n\nWARNING: You've tried this exact expression {count} times "
                                 "and it keeps failing. Stop and try a DIFFERENT approach."
@@ -1315,7 +1339,7 @@ class Brain:
             summary = self._summarize_tool_loop(loop_log, seen_errors)
             await self._emit("tool_summary", text=summary)
 
-        # Accumulate journal tag for this cycle
+        # Accumulate journal tag for this cycle (cap at 20 to prevent unbounded growth)
         thought_text = response.get("text", "") or ""
         mood_label = self._current_mood["label"] if self._current_mood else "unknown"
         self._journal_tags.append({
@@ -1325,6 +1349,8 @@ class Brain:
             "tool_count": tool_call_count,
             "was_active": was_active,
         })
+        if len(self._journal_tags) > 20:
+            self._journal_tags = self._journal_tags[-20:]
 
         return was_active
 
