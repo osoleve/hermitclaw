@@ -2,6 +2,22 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import GameWorld, { GameWorldHandle } from "./GameWorld";
 import { PALETTE } from "./world";
 
+const MOBILE_BREAKPOINT = 768;
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.innerWidth <= MOBILE_BREAKPOINT
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", onChange);
+    setIsMobile(mq.matches);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return isMobile;
+}
+
 interface ApiCall {
   timestamp: string;
   instructions: string;
@@ -171,6 +187,7 @@ function renderOutputItem(item: Record<string, unknown>, phase: Phase): Msg | nu
 }
 
 export default function App() {
+  const isMobile = useIsMobile();
   const [calls, setCalls] = useState<ApiCall[]>([]);
   const [position, setPosition] = useState({ x: 5, y: 5 });
   const [creatureState, setCreatureState] = useState("idle");
@@ -576,9 +593,9 @@ export default function App() {
 
   return (
     <div style={page}>
-      <div style={headerBar}>
+      <div style={isMobile ? { ...headerBar, padding: "8px 12px", gap: 8, flexWrap: "wrap" } : headerBar}>
         <div style={headerDot(stateColor(creatureState))} />
-        <span style={headerTitle}>{creatureName}</span>
+        <span style={isMobile ? { ...headerTitle, fontSize: 14 } : headerTitle}>{creatureName}</span>
         <span style={headerState}>{creatureState}</span>
         <div style={{ flex: 1 }} />
         {rlmRuns.length > 0 && (
@@ -609,14 +626,14 @@ export default function App() {
           </button>
         )}
       </div>
-      <div style={twoPane}>
+      <div style={isMobile ? { ...twoPane, flexDirection: "column" } : twoPane}>
         {/* Left pane — Game world */}
-        <div style={gamePane}>
+        <div style={isMobile ? gamePaneMobile : gamePane}>
           <GameWorld ref={gameRef} position={position} state={creatureState} alert={alert} activity={activity} conversing={conversing} />
         </div>
 
         {/* Right pane — Chat feed */}
-        <div style={chatPane}>
+        <div style={isMobile ? chatPaneMobile : chatPane}>
           {/* Creature switcher */}
           {creatures.length > 1 && (
             <div style={switcherBar}>
@@ -636,7 +653,7 @@ export default function App() {
             </div>
           )}
           {rlmOpen && rlmRuns.length > 0 && (
-            <div style={rlmPanel}>
+            <div style={isMobile ? { ...rlmPanel, maxHeight: 200 } : rlmPanel}>
               <div style={rlmPanelHeader}>
                 <span style={rlmPanelTitle}>Deep Exploration</span>
                 <button style={rlmCloseBtn} onClick={() => setRlmOpen(false)}>Close</button>
@@ -673,7 +690,7 @@ export default function App() {
             </div>
           )}
           {journalOpen && journalEntries.length > 0 && (
-            <div style={journalPanel}>
+            <div style={isMobile ? { ...journalPanel, maxHeight: 200 } : journalPanel}>
               <div style={journalPanelHeader}>
                 <span style={journalPanelTitle}>Journal</span>
                 <button style={journalCloseBtn} onClick={() => setJournalOpen(false)}>Close</button>
@@ -693,7 +710,7 @@ export default function App() {
             </div>
           )}
           {bbsOpen && bbsIssues.length > 0 && (
-            <div style={bbsPanel}>
+            <div style={isMobile ? { ...bbsPanel, maxHeight: 200 } : bbsPanel}>
               <div style={bbsPanelHeader}>
                 <span style={bbsPanelTitle}>BBS Issues</span>
                 <button style={bbsCloseBtn} onClick={() => setBbsOpen(false)}>Close</button>
@@ -724,7 +741,7 @@ export default function App() {
             </div>
           )}
           <div ref={scrollRef} style={chatScroll}>
-          <div style={container}>
+          <div style={isMobile ? { ...container, padding: "12px 10px" } : container}>
             {messages.length === 0 && (
               <div style={emptyState}>
                 <div style={emptyDot} />
@@ -788,7 +805,7 @@ export default function App() {
               New messages
             </div>
           )}
-          <div style={inputBar}>
+          <div style={isMobile ? { ...inputBar, padding: "8px 10px", gap: 6 } : inputBar}>
             {conversing && countdown > 0 && (
               <div style={countdownStyle}>{countdown}s</div>
             )}
@@ -804,13 +821,13 @@ export default function App() {
               onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
             >
               <input
-                style={inputField}
+                style={isMobile ? { ...inputField, fontSize: 14, padding: "9px 10px" } : inputField}
                 type="text"
                 placeholder={conversing ? `Reply to ${creatureName}...` : `Say something to ${creatureName}...`}
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
               />
-              <button style={sendBtn} type="submit">Send</button>
+              <button style={isMobile ? { ...sendBtn, padding: "9px 14px" } : sendBtn} type="submit">Send</button>
             </form>
           </div>
         </div>
@@ -898,6 +915,30 @@ const chatPane: React.CSSProperties = {
   flexDirection: "column",
   background: P.surface,
   borderLeft: `1px solid ${P.border}`,
+};
+
+// ── Mobile overrides ──
+const gamePaneMobile: React.CSSProperties = {
+  width: "100%",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: P.void,
+  padding: "12px 16px",
+  flexShrink: 0,
+  maxHeight: "35vh",
+  overflow: "hidden",
+};
+
+const chatPaneMobile: React.CSSProperties = {
+  width: "100%",
+  flex: 1,
+  minHeight: 0,
+  display: "flex",
+  flexDirection: "column",
+  background: P.surface,
+  borderLeft: "none",
+  borderTop: `1px solid ${P.border}`,
 };
 
 const chatScroll: React.CSSProperties = {
