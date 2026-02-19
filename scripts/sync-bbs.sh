@@ -4,7 +4,7 @@
 set -euo pipefail
 
 FOLD_DIR="${FOLD_DIR:-$HOME/fold}"
-BBS_PATHS=".store/objects/ .store/heads/bbs/ .bbs/deps .bbs/post-counter .bbs/post-index.cache"
+BBS_PATHS=".store/objects/ .store/heads/bbs/ .bbs/"
 
 cd "$FOLD_DIR"
 
@@ -16,11 +16,11 @@ fi
 # Stage only BBS paths
 git add -- $BBS_PATHS
 
-# Commit only what we just staged (pathspec prevents capturing unrelated staged work)
+# Commit only what we just staged
 CHANGED=$(git diff --cached --stat -- $BBS_PATHS | tail -1)
-git commit -- $BBS_PATHS -m "bbs: sync creature-authored changes
+git commit -m "bbs: sync creature-authored changes
 
-$CHANGED"
+$CHANGED" -- $BBS_PATHS
 
 # Pull before push to avoid non-fast-forward failures
 git pull --rebase --autostash
