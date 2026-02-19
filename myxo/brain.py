@@ -509,6 +509,7 @@ class Brain:
             "task": task,
             "status": "running",
             "output": "",
+            "steps": [],
             "timestamp": started_at,
         }
         self._rlm_runs.append(run_data)
@@ -542,9 +543,13 @@ class Brain:
         per_step = 10 if api_key_scheme == "#f" else 45
         rlm_timeout = per_step * max_steps + 30
 
+        # Progress file for live trajectory updates
+        progress_file = f"/tmp/rlm2-progress-{run_id}.log"
+
         expr = (
             '(begin '
             '(load "boundary/pipeline/rlm2-drive.ss") '
+            f'(set! *rlm2-progress-file* "{progress_file}") '
             f'(let* ([provider (make-rlm-provider '
             f'  "{esc(endpoint)}" '
             f'  "{esc(model)}" '
@@ -558,7 +563,55 @@ class Brain:
         session = f"myxo-{name.lower()}-{run_id}"
         logger.info(f"RLM run starting (max {max_steps} steps, {rlm_timeout}s timeout, session={session}): {task[:80]}")
 
-        result = await asyncio.to_thread(fold_evaluate_long, expr, session, timeout=rlm_timeout)
+        # Run evaluation in background, poll progress file for live updates
+        loop = asyncio.get_event_loop()
+        eval_future = loop.run_in_executor(
+            None, fold_evaluate_long, expr, session, rlm_timeout)
+
+        seen_lines = 0
+        while not eval_future.done():
+            await asyncio.sleep(1.5)
+            try:
+                with open(progress_file) as f:
+                    lines = f.readlines()
+                new_lines = lines[seen_lines:]
+                if new_lines:
+                    for line in new_lines:
+                        parts = line.strip().split("\t", 3)
+                        if len(parts) >= 4:
+                            step_entry = {
+                                "step": int(parts[0]),
+                                "action": parts[1],
+                                "ok": parts[2] == "ok",
+                                "note": parts[3],
+                            }
+                            run_data["steps"].append(step_entry)
+                    seen_lines = len(lines)
+                    await self._broadcast({
+                        "event": "rlm",
+                        "data": {**run_data},
+                    })
+            except (FileNotFoundError, ValueError):
+                pass
+
+        result = eval_future.result()
+
+        # Read any remaining progress lines
+        try:
+            with open(progress_file) as f:
+                lines = f.readlines()
+            for line in lines[seen_lines:]:
+                parts = line.strip().split("\t", 3)
+                if len(parts) >= 4:
+                    run_data["steps"].append({
+                        "step": int(parts[0]),
+                        "action": parts[1],
+                        "ok": parts[2] == "ok",
+                        "note": parts[3],
+                    })
+            os.unlink(progress_file)
+        except (FileNotFoundError, ValueError):
+            pass
 
         # Parse and broadcast completion
         rlm_status, rlm_output = self._parse_rlm_result(result)
@@ -573,7 +626,7 @@ class Brain:
         if not result.startswith("Error:"):
             self._record_fold_artifact(f"(rlm: {task[:200]})", result)
 
-        logger.info(f"RLM run complete ({rlm_status}): {len(result)} chars")
+        logger.info(f"RLM run complete ({rlm_status}): {len(result)} chars, {len(run_data['steps'])} steps")
 
         # Return clean parsed output to the model, not the raw S-expression
         if rlm_status == "completed":

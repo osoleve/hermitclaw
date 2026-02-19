@@ -33,11 +33,19 @@ interface JournalEntry {
   timestamp: string;
 }
 
+interface RlmStep {
+  step: number;
+  action: string;
+  ok: boolean;
+  note: string;
+}
+
 interface RlmRun {
   id: string;
   task: string;
   status: "running" | "completed" | "exhausted" | "error" | string;
   output: string;
+  steps: RlmStep[];
   timestamp: string;
 }
 
@@ -634,6 +642,17 @@ export default function App() {
                       </span>
                     </div>
                     <div style={rlmItemTask}>{run.task}</div>
+                    {run.steps && run.steps.length > 0 && (
+                      <div style={rlmStepsContainer}>
+                        {run.steps.map((s) => (
+                          <div key={s.step} style={rlmStepRow}>
+                            <span style={rlmStepNum}>{s.step}</span>
+                            <span style={rlmStepAction(s.ok)}>{s.action}</span>
+                            <span style={rlmStepNote}>{s.note}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {run.output && run.status !== "running" && (
                       <div style={rlmItemOutput}>{run.output}</div>
                     )}
@@ -1472,6 +1491,45 @@ const rlmItemTask: React.CSSProperties = {
   fontFamily: MONO,
   lineHeight: "1.4",
   marginBottom: 4,
+};
+
+const rlmStepsContainer: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  marginBottom: 4,
+  padding: "4px 0",
+};
+
+const rlmStepRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: 6,
+  fontSize: 10,
+  fontFamily: MONO,
+  lineHeight: "1.4",
+};
+
+const rlmStepNum: React.CSSProperties = {
+  color: P.dim,
+  opacity: 0.5,
+  minWidth: 14,
+  textAlign: "right",
+  flexShrink: 0,
+};
+
+const rlmStepAction = (ok: boolean): React.CSSProperties => ({
+  color: ok ? P.rlm : P.error,
+  fontWeight: 600,
+  minWidth: 60,
+  flexShrink: 0,
+});
+
+const rlmStepNote: React.CSSProperties = {
+  color: P.dim,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
 const rlmItemOutput: React.CSSProperties = {
