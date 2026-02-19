@@ -541,7 +541,7 @@ class Brain:
         seed_escaped = esc(seed_input) if seed_input else ""
 
         max_steps = self.creature_config.get("rlm_max_steps", 12)
-        per_step = 10 if api_key_scheme == "#f" else 45
+        per_step = 20 if api_key_scheme == "#f" else 45
         rlm_timeout = per_step * max_steps + 30
 
         # Progress file for live trajectory updates
