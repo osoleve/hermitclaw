@@ -559,6 +559,7 @@ class Brain:
         seed_escaped = esc(seed_input) if seed_input else ""
 
         max_steps = self.creature_config.get("rlm_max_steps", 12)
+        max_tokens = self.creature_config.get("rlm_max_tokens", 1024)
         per_step = 20 if api_key_scheme == "#f" else 45
         rlm_timeout = per_step * max_steps + 30
 
@@ -567,6 +568,7 @@ class Brain:
 
         expr = (
             '(begin '
+            '(set-top-level-value! \'*meta-quiet* #t) '
             '(load "boundary/pipeline/rlm2-drive.ss") '
             f'(set! *rlm2-progress-file* "{progress_file}") '
             f'(let* ([provider (make-rlm-provider '
@@ -575,7 +577,7 @@ class Brain:
             f'  {api_key_scheme} '
             f"  'openai)] "
             f' [config (make-rlm2-config provider "" '
-            f'  {max_steps} 50000 2000 2 3 8000 #f)]) '
+            f'  {max_steps} 50000 2000 2 3 8000 #f {max_tokens})]) '
             f'  (rlm2-run config "{esc(task)}" "{seed_escaped}")))'
         )
 
@@ -614,6 +616,12 @@ class Brain:
                 pass
 
         result = eval_future.result()
+
+        # Strip Fold boot noise — daemon combines stdout with expression value
+        marker = "\n=> "
+        idx = result.rfind(marker)
+        if idx >= 0:
+            result = result[idx + len(marker):]
 
         # Read any remaining progress lines
         try:
@@ -1039,7 +1047,7 @@ class Brain:
         # Retrieve memories
         memories = self.stream.retrieve("what was I working on and thinking about", top_k=5)
         if memories:
-            mem_text = "\n".join(f"- {m['content']}" for m in memories)
+            mem_text = "\n".join(f"- {m['content'][:200]}" for m in memories)
             parts.append(f"**Memories from before:**\n{mem_text}")
 
         # Show recent Fold artifacts so creature knows what it computed before
@@ -1083,7 +1091,7 @@ class Brain:
                 older = [m for m in memories
                          if (now - datetime.fromisoformat(m["timestamp"])).total_seconds() > 30]
                 if older:
-                    mem_text = "\n".join(f"- {m['content']}" for m in older)
+                    mem_text = "\n".join(f"- {m['content'][:200]}" for m in older)
                     parts.append(f"Related memories:\n{mem_text}")
 
         if parts:
@@ -1369,7 +1377,7 @@ class Brain:
             return
 
         memories_text = "\n\n".join(
-            f"[{m['kind']}] (importance {m['importance']}): {m['content']}"
+            f"[{m['kind']}] (importance {m['importance']}): {m['content'][:300]}"
             for m in recent_memories
         )
 
@@ -1413,7 +1421,7 @@ class Brain:
         files = self._list_env_files()
         recent_memories = self.stream.get_recent(n=10)
         memories_text = "\n".join(
-            f"- {m['content']}" for m in recent_memories
+            f"- {m['content'][:200]}" for m in recent_memories
         ) if recent_memories else "(none yet)"
 
         plan_input = [{"role": "user", "content": f"""Time to plan. Here's your current state:
