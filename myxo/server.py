@@ -270,6 +270,7 @@ async def get_status(request: Request):
         "name": brain.identity["name"],
         "position": brain.position,
         "focus_mode": brain._focus_mode,
+        "session_logging": brain._session_log_enabled,
     }
 
 @app.post("/api/focus-mode")
@@ -299,15 +300,6 @@ async def post_message(request: Request):
         brain.receive_user_message(text)
     return {"ok": True}
 
-@app.post("/api/snapshot")
-async def post_snapshot(request: Request):
-    """Receive a canvas snapshot from the frontend."""
-    brain = _get_brain(request)
-    if not brain:
-        return _NO_CREATURE
-    body = await request.json()
-    brain.latest_snapshot = body.get("image")
-    return {"ok": True}
 
 @app.get("/api/bbs")
 async def get_bbs(request: Request):
@@ -355,6 +347,35 @@ async def get_journal_by_date(request: Request, date_str: str):
     except FileNotFoundError:
         content = ""
     return {"date": date_str, "content": content}
+
+
+@app.get("/api/session-log")
+async def get_session_log(request: Request):
+    """Check session logging status."""
+    brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
+    return {
+        "enabled": brain._session_log_enabled,
+        "path": brain._session_log_path,
+    }
+
+
+@app.post("/api/session-log")
+async def post_session_log(request: Request):
+    """Toggle session logging on or off."""
+    brain = _get_brain(request)
+    if not brain:
+        return _NO_CREATURE
+    body = await request.json()
+    enabled = bool(body.get("enabled", False))
+    if enabled and not brain._session_log_enabled:
+        path = brain.start_session_log()
+        return {"ok": True, "enabled": True, "path": path}
+    elif not enabled and brain._session_log_enabled:
+        path = brain.stop_session_log()
+        return {"ok": True, "enabled": False, "path": path}
+    return {"ok": True, "enabled": brain._session_log_enabled, "path": brain._session_log_path}
 
 
 @app.get("/api/files")

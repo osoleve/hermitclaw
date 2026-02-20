@@ -1,7 +1,6 @@
 """The thinking loop — the heart of the creature."""
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -126,10 +125,11 @@ class Brain:
     _TEXT_EXTS = {".txt", ".md", ".py", ".json", ".csv", ".yaml", ".yml",
                   ".toml", ".js", ".ts", ".html", ".css", ".sh", ".log"}
     _PDF_EXTS = {".pdf"}
-    _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
     # Internal files the creature/system manages — never trigger alerts
     _IGNORE_FILES = {"memory_stream.jsonl", "identity.json", "outbox.jsonl",
                       "outbox_read.json", "fold_artifacts.jsonl", "memory_state.json"}
+    # Directories to skip during environment file scanning
+    _IGNORE_DIRS = {"session_logs", "journal", "logs"}
     # Internal files that live in the root but shouldn't trigger inbox alerts
     _INTERNAL_ROOT_FILES = {"projects.md"}
 
@@ -158,7 +158,6 @@ class Brain:
         self._ws_clients: set = set()
         self.stream: MemoryStream | None = None  # loaded in run()
         self.position = {"x": 5, "y": 5}
-        self.latest_snapshot = None  # data URL from frontend canvas
         if not Brain._BLOCKED:
             Brain._BLOCKED = Brain._init_blocked()
 
@@ -197,23 +196,16 @@ class Brain:
         # Cross-cycle error tracking — prevents fixation loops
         self._persistent_errors: dict[str, int] = {}  # error_key -> count across cycles
 
+        # Session logging — toggleable trace capture for SFT/RL
+        self._session_log_enabled: bool = False
+        self._session_log_path: str | None = None
+        self._session_log_file = None  # open file handle
+
         # Journal state — auto-captured cycle metadata + periodic synthesis
         self._journal_tags: list[dict] = []
         self._cycles_since_journal: int = 0
 
     # --- Helpers ---
-
-    @staticmethod
-    def _strip_images_for_log(entry: dict) -> dict:
-        """Remove base64 image data from a log entry to keep JSONL manageable."""
-        import copy
-        e = copy.deepcopy(entry)
-        for item in e.get("input", []):
-            if isinstance(item, dict) and isinstance(item.get("content"), list):
-                for part in item["content"]:
-                    if isinstance(part, dict) and part.get("type") == "input_image":
-                        part["image_url"] = "(image stripped from log)"
-        return e
 
     def _record_fold_artifact(self, expression: str, result: str):
         """Append a successful Fold computation to the artifact log."""
@@ -290,7 +282,7 @@ class Brain:
         env_root = self.env_path
         files = []
         for dirpath, dirnames, filenames in os.walk(env_root):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in Brain._IGNORE_DIRS]
             for fname in filenames:
                 if fname.startswith(".") or fname in Brain._IGNORE_FILES:
                     continue
@@ -306,6 +298,59 @@ class Brain:
     def remove_ws_client(self, ws):
         self._ws_clients.discard(ws)
 
+    def start_session_log(self) -> str:
+        """Start recording the broadcast stream to a JSONL file. Returns the log path."""
+        log_dir = os.path.join(self.env_path, "session_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(log_dir, f"{ts}.jsonl")
+        self._session_log_path = path
+        self._session_log_file = open(path, "a")
+        self._session_log_enabled = True
+        # Write a header entry so we know what creature/model this trace is from
+        header = {
+            "event": "session_log_start",
+            "timestamp": datetime.now().isoformat(),
+            "creature": self.identity.get("name", "unknown"),
+            "model": self.creature_config.get("model", config.get("model", "unknown")),
+            "thought_count_at_start": self.thought_count,
+        }
+        self._session_log_file.write(json.dumps(header) + "\n")
+        self._session_log_file.flush()
+        logger.info(f"Session logging started: {path}")
+        return path
+
+    def stop_session_log(self) -> str | None:
+        """Stop session logging. Returns the path of the completed log."""
+        self._session_log_enabled = False
+        path = self._session_log_path
+        if self._session_log_file:
+            try:
+                # Write a footer
+                footer = {
+                    "event": "session_log_stop",
+                    "timestamp": datetime.now().isoformat(),
+                    "thought_count_at_stop": self.thought_count,
+                }
+                self._session_log_file.write(json.dumps(footer) + "\n")
+                self._session_log_file.close()
+            except Exception:
+                pass
+            self._session_log_file = None
+        self._session_log_path = None
+        logger.info(f"Session logging stopped: {path}")
+        return path
+
+    def _write_session_log(self, message: dict):
+        """Write a broadcast message to the session log."""
+        if not self._session_log_enabled or not self._session_log_file:
+            return
+        try:
+            self._session_log_file.write(json.dumps(message) + "\n")
+            self._session_log_file.flush()
+        except Exception:
+            pass
+
     async def _broadcast(self, message: dict):
         dead = set()
         for ws in self._ws_clients:
@@ -314,6 +359,7 @@ class Brain:
             except Exception:
                 dead.add(ws)
         self._ws_clients -= dead
+        self._write_session_log(message)
 
     async def _emit(self, event_type: str, **data):
         entry = {
@@ -360,9 +406,8 @@ class Brain:
         )
         if has_text:
             try:
-                log_entry = self._strip_images_for_log(entry)
                 with open(LOG_PATH, "a") as f:
-                    f.write(json.dumps(log_entry) + "\n")
+                    f.write(json.dumps(entry) + "\n")
             except Exception:
                 pass
 
@@ -966,7 +1011,7 @@ class Brain:
         env_root = self.env_path
         files = set()
         for dirpath, dirnames, filenames in os.walk(env_root):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in Brain._IGNORE_DIRS]
             for fname in filenames:
                 if fname.startswith(".") or fname in Brain._IGNORE_FILES:
                     continue
@@ -986,7 +1031,7 @@ class Brain:
             if not os.path.isfile(fpath):
                 continue
             ext = os.path.splitext(rel_path)[1].lower()
-            entry: dict = {"name": rel_path, "content": "", "image": None}
+            entry: dict = {"name": rel_path, "content": ""}
             if ext in Brain._PDF_EXTS:
                 try:
                     import pymupdf
@@ -1008,14 +1053,6 @@ class Brain:
                     entry["content"] = text[:2000]
                 except Exception:
                     entry["content"] = "(could not read file)"
-            elif ext in Brain._IMAGE_EXTS:
-                try:
-                    with open(fpath, "rb") as f:
-                        data = f.read()
-                    mime = "image/png" if ext == ".png" else "image/jpeg" if ext in (".jpg", ".jpeg") else "image/gif" if ext == ".gif" else "image/webp"
-                    entry["image"] = f"data:{mime};base64,{base64.b64encode(data).decode()}"
-                except Exception:
-                    entry["content"] = "(could not read image)"
             else:
                 entry["content"] = f"(binary file: {rel_path})"
             results.append(entry)
@@ -1203,33 +1240,16 @@ class Brain:
                 "Spend your next several think cycles on this. Don't just glance at it and move on."
             )
             for f in self._inbox_pending:
-                if f["image"]:
-                    parts.append(f"\n📎 {f['name']} (image attached below)")
-                elif f["content"]:
+                if f["content"]:
                     parts.append(f"\n📎 {f['name']}:\n{f['content']}")
             # Preserve user message if both arrived on the same cycle
             if pending_voice:
                 parts.insert(0, f"You hear a voice from outside your room say: \"{pending_voice}\"\n")
             nudge = "\n".join(parts)
-            # Build content with any images
-            content_parts: list[dict] = []
-            for f in self._inbox_pending:
-                if f["image"]:
-                    content_parts.append({"type": "input_image", "image_url": f["image"]})
-            content_parts.append({"type": "input_text", "text": nudge})
-            input_list.append({"role": "user", "content": content_parts if len(content_parts) > 1 else nudge})
+            input_list.append({"role": "user", "content": nudge})
             # Reset plan counter so the creature has time to work on the file
             self._cycles_since_plan = 0
             self._inbox_pending = []
-        # Include room snapshot on wake-up only (first think cycle)
-        elif self.thought_count == 0 and self.latest_snapshot:
-            input_list.append({
-                "role": "user",
-                "content": [
-                    {"type": "input_image", "image_url": self.latest_snapshot},
-                    {"type": "input_text", "text": nudge + "\n\n(Above: a picture of your room right now.)"},
-                ],
-            })
         else:
             input_list.append({"role": "user", "content": nudge})
 
@@ -1325,18 +1345,6 @@ class Brain:
             return False
 
         await self._emit_api_call(instructions, input_list, response)
-
-        # Strip heavy base64 images from input_list after the first LLM call —
-        # the model has seen the snapshot, no need to carry 190KB through every
-        # tool loop iteration.
-        for i, item in enumerate(input_list):
-            if isinstance(item, dict) and isinstance(item.get("content"), list):
-                parts = item["content"]
-                trimmed = [p for p in parts if not (isinstance(p, dict) and p.get("type") == "input_image")]
-                if len(trimmed) < len(parts):
-                    # Replace multipart with just the text
-                    text_parts = [p.get("text", "") for p in trimmed if isinstance(p, dict) and p.get("type") == "input_text"]
-                    input_list[i] = {"role": item["role"], "content": " ".join(text_parts)}
 
         was_active = bool(response["tool_calls"])
         tool_call_count = 0
@@ -1709,7 +1717,7 @@ class Brain:
         self.stream = await asyncio.to_thread(MemoryStream, self.env_path, self.provider)
 
         # Mark subdirectory files as "seen" but leave root-level user files
-        # (PDFs, images, etc.) as unseen so they trigger inbox alerts on first cycle
+        # (PDFs, etc.) as unseen so they trigger inbox alerts on first cycle
         all_files = self._scan_env_files()
         self._seen_env_files = {
             f for f in all_files
@@ -1772,5 +1780,7 @@ class Brain:
     def stop(self):
         self.running = False
         self.state = "idle"
+        if self._session_log_enabled:
+            self.stop_session_log()
         if hasattr(self, "_wake_event"):
             self._wake_event.set()

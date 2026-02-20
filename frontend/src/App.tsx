@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import GameWorld, { GameWorldHandle } from "./GameWorld";
+import GameWorld from "./GameWorld";
 import { PALETTE } from "./world";
 
 const MOBILE_BREAKPOINT = 768;
@@ -67,7 +67,7 @@ interface RlmRun {
 }
 
 type Phase = "normal" | "dream" | "planning";
-type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; image?: string; isRespond?: boolean; isOwner?: boolean; isBbs?: boolean; isRlm?: boolean };
+type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; isRespond?: boolean; isOwner?: boolean; isBbs?: boolean; isRlm?: boolean };
 
 /**
  * Render an INPUT item — we only care about:
@@ -78,7 +78,6 @@ type Msg = { side: "left" | "right" | "system"; text: string; phase: Phase; imag
 function renderInputItem(item: Record<string, unknown>, phase: Phase): Msg | null {
   if (item.role === "user") {
     const content = item.content;
-    // Content can be a string or an array (when it includes an image)
     if (typeof content === "string") {
       // Detect owner voice messages and extract just the spoken text
       const voiceMatch = content.match(/^You hear a voice from outside your room say: "(.+?)"\n/s);
@@ -88,17 +87,14 @@ function renderInputItem(item: Record<string, unknown>, phase: Phase): Msg | nul
     }
     if (Array.isArray(content)) {
       let text = "";
-      let image: string | undefined;
       for (const part of content) {
         if (part.type === "input_text") text = part.text as string;
-        if (part.type === "input_image") image = part.image_url as string;
       }
-      // Check text part for owner voice pattern too
       const voiceMatch = text.match(/^You hear a voice from outside your room say: "(.+?)"\n/s);
       if (voiceMatch) {
-        return { side: "left", text: voiceMatch[1], phase, isOwner: true, image };
+        return { side: "left", text: voiceMatch[1], phase, isOwner: true };
       }
-      return { side: "left", text: text || "[image]", phase, image };
+      return { side: "left", text: text || "[unknown]", phase };
     }
     return { side: "left", text: content as string, phase };
   }
@@ -200,6 +196,7 @@ export default function App() {
   const [pendingVoice, setPendingVoice] = useState<string | null>(null);
   const [creatureName, setCreatureName] = useState("myxo");
   const [focusMode, setFocusMode] = useState(false);
+  const [sessionLogging, setSessionLogging] = useState(false);
   const [bbsIssues, setBbsIssues] = useState<BbsIssue[]>([]);
   const [bbsOpen, setBbsOpen] = useState(false);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
@@ -210,7 +207,6 @@ export default function App() {
   const [activeCreature, setActiveCreature] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const gameRef = useRef<GameWorldHandle>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const wsBackoffRef = useRef(1000);
@@ -316,6 +312,7 @@ export default function App() {
       setCalls(rawData);
       if (statusData.position) setPosition(statusData.position);
       if (statusData.focus_mode !== undefined) setFocusMode(statusData.focus_mode);
+      if (statusData.session_logging !== undefined) setSessionLogging(statusData.session_logging);
       setCreatureState(statusData.state || "idle");
       if (idData.name) setCreatureName(idData.name);
       setBbsIssues(bbsData);
@@ -387,6 +384,7 @@ export default function App() {
     setJournalOpen(false);
     setRlmRuns([]);
     setRlmOpen(false);
+    setSessionLogging(false);
 
     // Update creature name immediately
     const creature = creatures.find((c) => c.id === creatureId);
@@ -423,20 +421,6 @@ export default function App() {
     }
     return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
   }, [conversing]);
-
-  // Send canvas snapshot to backend when thinking starts
-  useEffect(() => {
-    if (creatureState === "thinking" && gameRef.current) {
-      const dataUrl = gameRef.current.snapshot();
-      if (dataUrl) {
-        fetch(`/api/snapshot${creatureParam}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: dataUrl }),
-        }).catch(() => {});
-      }
-    }
-  }, [creatureState, creatureParam]);
 
   // Auto-scroll: track whether user is "pinned" to bottom
   const pinnedRef = useRef(true);
@@ -493,6 +477,16 @@ export default function App() {
     const next = !focusMode;
     setFocusMode(next);
     fetch(`/api/focus-mode${creatureParam}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next }),
+    }).catch(() => {});
+  };
+
+  const toggleSessionLogging = () => {
+    const next = !sessionLogging;
+    setSessionLogging(next);
+    fetch(`/api/session-log${creatureParam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: next }),
@@ -629,7 +623,7 @@ export default function App() {
       <div style={isMobile ? { ...twoPane, flexDirection: "column" } : twoPane}>
         {/* Left pane — Game world */}
         <div style={isMobile ? gamePaneMobile : gamePane}>
-          <GameWorld ref={gameRef} position={position} state={creatureState} alert={alert} activity={activity} conversing={conversing} />
+          <GameWorld position={position} state={creatureState} alert={alert} activity={activity} conversing={conversing} />
         </div>
 
         {/* Right pane — Chat feed */}
@@ -770,13 +764,6 @@ export default function App() {
               return (
                 <div key={i} style={{ marginBottom: 4 }}>
                   <div style={cardStyle(msg)}>
-                    {msg.image && (
-                      <img
-                        src={msg.image}
-                        style={snapshotImg}
-                        alt="Room snapshot"
-                      />
-                    )}
                     <pre style={cardText}>
                       {msg.text}
                     </pre>
@@ -815,6 +802,13 @@ export default function App() {
               title={focusMode ? "Focus mode ON — click to turn off" : "Focus mode OFF — click to turn on"}
             >
               Focus
+            </button>
+            <button
+              style={sessionLogging ? logBtnActive : logBtnInactive}
+              onClick={toggleSessionLogging}
+              title={sessionLogging ? "Session logging ON — recording trace" : "Session logging OFF — click to start recording"}
+            >
+              {sessionLogging ? "● Log" : "Log"}
             </button>
             <form
               style={inputForm}
@@ -1053,13 +1047,6 @@ const cardText: React.CSSProperties = {
   color: "inherit",
 };
 
-const snapshotImg: React.CSSProperties = {
-  width: "100%",
-  maxWidth: 200,
-  borderRadius: 4,
-  marginBottom: 6,
-};
-
 // ── System blocks ──
 const systemBlock: React.CSSProperties = {
   background: P.void,
@@ -1191,6 +1178,32 @@ const focusBtnActive: React.CSSProperties = {
   border: `1px solid ${P.respond}`,
   background: P.respond,
   color: "#fff",
+  fontSize: 11,
+  fontWeight: 500,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+  fontFamily: MONO,
+};
+
+const logBtnInactive: React.CSSProperties = {
+  padding: "7px 12px",
+  borderRadius: 6,
+  border: `1px solid ${P.border}`,
+  background: "transparent",
+  color: P.dim,
+  fontSize: 11,
+  fontWeight: 500,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+  fontFamily: MONO,
+};
+
+const logBtnActive: React.CSSProperties = {
+  padding: "7px 12px",
+  borderRadius: 6,
+  border: `1px solid #f87171`,
+  background: "#f8717122",
+  color: "#f87171",
   fontSize: 11,
   fontWeight: 500,
   cursor: "pointer",

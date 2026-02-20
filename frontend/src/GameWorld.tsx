@@ -3,7 +3,7 @@
  * Tilemap room + sprite-sheet slime creature + plasma substrate background.
  */
 
-import { useRef, useEffect, useImperativeHandle, forwardRef, useState } from "react";
+import { useRef, useEffect, useState } from "react";
 import { COLS, ROWS, TILE, SPRITE_FRAME, PALETTE, ASSETS, SLIME_TINTS } from "./world";
 import { loadImage, drawSprite, tickAnimation, getCurrentFrame, setAnimation, gridFrames } from "./sprites";
 import type { AnimationState, AnimationDef } from "./sprites";
@@ -331,12 +331,7 @@ function drawDeepExploration(ctx: CanvasRenderingContext2D, x: number, y: number
 // Component
 // ════════════════════════════════════════════════
 
-export interface GameWorldHandle {
-  snapshot: () => string;
-}
-
-const GameWorld = forwardRef<GameWorldHandle, Props>(
-  ({ position, state, alert, activity, conversing }, ref) => {
+const GameWorld = ({ position, state, alert, activity, conversing }: Props) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const posRef = useRef({ x: position.x, y: position.y });
     const targetRef = useRef({ x: position.x, y: position.y });
@@ -357,10 +352,6 @@ const GameWorld = forwardRef<GameWorldHandle, Props>(
 
     // Pre-compute object instances for y-sorting
     const objectsRef = useRef(getObjectInstances(OBJECT_MAP));
-
-    useImperativeHandle(ref, () => ({
-      snapshot: () => canvasRef.current?.toDataURL() || "",
-    }));
 
     useEffect(() => { targetRef.current = { x: position.x, y: position.y }; }, [position.x, position.y]);
     useEffect(() => { stateRef.current = state; }, [state]);
@@ -573,7 +564,6 @@ const GameWorld = forwardRef<GameWorldHandle, Props>(
         }}
       />
     );
-  },
-);
+};
 
 export default GameWorld;

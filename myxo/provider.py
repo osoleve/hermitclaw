@@ -386,11 +386,6 @@ class LocalProvider(Provider):
             if isinstance(p, dict):
                 if p.get("type") == "input_text":
                     converted.append({"type": "text", "text": p["text"]})
-                elif p.get("type") == "input_image":
-                    converted.append({
-                        "type": "image_url",
-                        "image_url": {"url": p["image_url"]},
-                    })
                 elif p.get("type") == "text":
                     converted.append(p)
                 else:
